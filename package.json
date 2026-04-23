@@ -33,7 +33,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/aquarium-tools/fathom"
+    "url": "https://github.com/rmferguson/fathom"
+  },
+  "publishConfig": {
+    "access": "public"
   },
   "keywords": [
     "claude-code",
