@@ -1,0 +1,45 @@
+{
+  "name": "@aquarium-tools/fathom",
+  "version": "0.1.0",
+  "description": "Hooks-based telemetry and observability for Claude Code sessions",
+  "license": "MIT",
+  "bin": {
+    "fathom": "./dist/cli/index.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "dev": "tsx src/cli/index.ts",
+    "install-hooks": "tsx scripts/install.ts",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "commander": "^12.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.0.0",
+    "vitest": "^4.1.5"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aquarium-tools/fathom"
+  },
+  "keywords": [
+    "claude-code",
+    "telemetry",
+    "observability",
+    "hooks",
+    "ai-tools"
+  ]
+}
