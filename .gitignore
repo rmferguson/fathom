@@ -6,4 +6,5 @@ dist/
 *.db
 .beads-credential-key
 sg-firm/
+.beads/
 .claude/
