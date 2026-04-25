@@ -21,8 +21,6 @@ export type EventType =
   | "notification"
   | "subagent_start"
   | "subagent_stop"
-  | "permission_request"
-  | "user_prompt"
   | "pre_compact";
 
 export interface FathomEvent {
@@ -79,6 +77,13 @@ export interface SessionStartPayload {
 
 export interface SessionEndPayload {
   cwd: string;
+  /**
+   * @deprecated Always undefined — Claude Code's Stop and SessionEnd hooks
+   * never populate a wall-time field on the payload. Retained as an optional
+   * field for forward compatibility in case a future hook version supplies it.
+   * Aggregator currently derives session duration from
+   *   Date.parse(session_end.timestamp) - Date.parse(session_start.timestamp).
+   */
   wall_time_ms?: number;
   last_assistant_message?: string;
   /**

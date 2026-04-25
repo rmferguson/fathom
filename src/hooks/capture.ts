@@ -120,6 +120,7 @@ export function normalize(raw: Rec): Rec | null {
   if (eventName === "Notification") {
     return event("notification", {
       message: raw.message ?? "",
+      level: raw.level ?? null,
     });
   }
 
@@ -144,6 +145,32 @@ export function normalize(raw: Rec): Rec | null {
     return event("pre_compact", {});
   }
 
+  // Intentionally unhandled hook events.
+  //
+  // Claude Code emits ~30 hook event types (see docs/hook-reference.md). Fathom
+  // captures only the ones above — those are the events that produce metrics
+  // worth aggregating (tool calls, sessions, subagents, compactions). Returning
+  // null here drops everything else silently, which is the correct behavior:
+  //
+  //   - UserPromptSubmit       — only carries prompt text; not a metric.
+  //   - PermissionRequest /    — workflow signals, not workload signals.
+  //     PermissionDenied
+  //   - PostCompact            — pair with PreCompact; PreCompact alone is enough.
+  //   - StopFailure            — rare; SessionEnd already covers session boundaries.
+  //   - ConfigChange,          — environmental, not workload.
+  //     CwdChanged, FileChanged
+  //   - TaskCreated /          — task tracker tooling, not workload metrics.
+  //     TaskCompleted
+  //   - WorktreeCreate /       — workspace plumbing, not workload metrics.
+  //     WorktreeRemove
+  //   - Elicitation /          — interactive input flows, no aggregation value.
+  //     ElicitationResult
+  //   - InstructionsLoaded     — environmental, fires on session start.
+  //   - TeammateIdle           — multi-agent coordination, out of scope.
+  //
+  // Adding a new event type means: (1) extend the EventType union in
+  // schema/v1.ts, (2) add a handler branch above, (3) update the aggregator
+  // if the event should affect metrics, (4) document in docs/hook-reference.md.
   return null;
 }
 

@@ -8,3 +8,21 @@ dist/
 sg-firm/
 .beads/
 .claude/
+
+# Fathom local sink (when run inside this repo)
+.fathom/
+
+# Test coverage reports
+coverage/
+
+# Logs
+*.log
+
+# IDE / editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# macOS
+.DS_Store

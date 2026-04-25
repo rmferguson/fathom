@@ -35,6 +35,10 @@
     "type": "git",
     "url": "git+https://github.com/rmferguson/fathom.git"
   },
+  "homepage": "https://github.com/rmferguson/fathom#readme",
+  "bugs": {
+    "url": "https://github.com/rmferguson/fathom/issues"
+  },
   "publishConfig": {
     "access": "public"
   },

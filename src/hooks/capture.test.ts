@@ -20,8 +20,69 @@ describe("normalize", () => {
   });
 
   it("sets project_dir from raw.cwd when CLAUDE_PROJECT_DIR is unset", () => {
-    const result = normalize(raw({ hook_event_name: "SessionStart", cwd: "/home/user/projects/myapp", permission_mode: "default" }));
-    expect(result?.project_dir).toBe("/home/user/projects/myapp");
+    const prior = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
+    try {
+      const result = normalize(raw({ hook_event_name: "SessionStart", cwd: "/home/user/projects/myapp", permission_mode: "default" }));
+      expect(result?.project_dir).toBe("/home/user/projects/myapp");
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_PROJECT_DIR = prior;
+    }
+  });
+
+  it("strips trailing slash from project_dir (raw.cwd source)", () => {
+    const prior = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
+    try {
+      const result = normalize(raw({ hook_event_name: "SessionStart", cwd: "/home/user/projects/myapp/", permission_mode: "default" }));
+      expect(result?.project_dir).toBe("/home/user/projects/myapp");
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_PROJECT_DIR = prior;
+    }
+  });
+
+  it("strips trailing slash from project_dir (CLAUDE_PROJECT_DIR source)", () => {
+    const prior = process.env.CLAUDE_PROJECT_DIR;
+    process.env.CLAUDE_PROJECT_DIR = "/etc/foo/";
+    try {
+      const result = normalize(raw({ hook_event_name: "SessionStart", cwd: "/somewhere/else", permission_mode: "default" }));
+      expect(result?.project_dir).toBe("/etc/foo");
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+      else process.env.CLAUDE_PROJECT_DIR = prior;
+    }
+  });
+
+  it("project_dir is empty string when CLAUDE_PROJECT_DIR and cwd are both absent", () => {
+    const prior = process.env.CLAUDE_PROJECT_DIR;
+    delete process.env.CLAUDE_PROJECT_DIR;
+    try {
+      const result = normalize(raw({ hook_event_name: "PreCompact" }));
+      expect(result?.project_dir).toBe("");
+    } finally {
+      if (prior !== undefined) process.env.CLAUDE_PROJECT_DIR = prior;
+    }
+  });
+
+  it("CLAUDE_PROJECT_DIR overrides raw.cwd", () => {
+    const prior = process.env.CLAUDE_PROJECT_DIR;
+    process.env.CLAUDE_PROJECT_DIR = "/env/wins";
+    try {
+      const result = normalize(raw({ hook_event_name: "SessionStart", cwd: "/cwd/loses", permission_mode: "default" }));
+      expect(result?.project_dir).toBe("/env/wins");
+    } finally {
+      if (prior === undefined) delete process.env.CLAUDE_PROJECT_DIR;
+      else process.env.CLAUDE_PROJECT_DIR = prior;
+    }
+  });
+
+  it("session_id defaults to empty string when missing", () => {
+    const result = normalize({ hook_event_name: "PreCompact" } as Record<string, unknown>);
+    expect(result?.session_id).toBe("");
+  });
+
+  it("returns null for missing hook_event_name", () => {
+    expect(normalize(raw({}))).toBeNull();
   });
 
   describe("PostToolUse", () => {
@@ -146,6 +207,50 @@ describe("normalize", () => {
     const result = normalize(raw({ hook_event_name: "Notification", message: "Build done" }));
     expect(result?.event_type).toBe("notification");
     expect(result?.payload.message).toBe("Build done");
+  });
+
+  it("Notification: forwards level field when present", () => {
+    const result = normalize(raw({ hook_event_name: "Notification", message: "warn", level: "warning" }));
+    expect(result?.payload.level).toBe("warning");
+  });
+
+  it("Notification: level is null when absent in raw payload", () => {
+    const result = normalize(raw({ hook_event_name: "Notification", message: "info" }));
+    expect(result?.payload.level).toBeNull();
+  });
+
+  it("PostToolUse non-Agent: omits agent-only token fields", () => {
+    const result = normalize(raw({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_use_id: "tu-x",
+      tool_response: { interrupted: false, totalDurationMs: 50 },
+    }));
+    // Token fields should not be present on non-Agent tool_use payloads.
+    expect(result?.payload.total_tokens).toBeUndefined();
+    expect(result?.payload.input_tokens).toBeUndefined();
+  });
+
+  it("PostToolUse: tool_response missing entirely → still returns event with success=true", () => {
+    const result = normalize(raw({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_use_id: "tu-y",
+    }));
+    expect(result?.event_type).toBe("tool_use");
+    // No tool_response → response.interrupted undefined → coerces to false → success true.
+    expect(result?.payload.success).toBe(true);
+  });
+
+  it("PostToolUse Agent: missing usage object → token fields undefined, no throw", () => {
+    const result = normalize(raw({
+      hook_event_name: "PostToolUse",
+      tool_name: "Agent",
+      tool_use_id: "tu-z",
+      tool_response: { status: "completed", totalTokens: 5 },
+    }));
+    expect(result?.payload.total_tokens).toBe(5);
+    expect(result?.payload.input_tokens).toBeUndefined();
   });
 
   it("SubagentStart: subagent_start with agent_id and agent_type", () => {
