@@ -10,7 +10,18 @@ import {
   SubagentPayload,
 } from "../schema/v1";
 
-export const SINK_PATH = path.join(os.homedir(), ".fathom", "events.jsonl");
+/**
+ * Default sink path. Honors FATHOM_SINK so reads and writes line up when the
+ * env var is set (capture.ts uses the same override). Evaluated lazily so
+ * tests can override the env var per-test without re-importing the module.
+ */
+export function defaultSinkPath(): string {
+  return process.env.FATHOM_SINK ?? path.join(os.homedir(), ".fathom", "events.jsonl");
+}
+
+// Backwards-compatible export — captures the value at import time. Most call
+// sites should prefer defaultSinkPath() so env-var overrides at runtime work.
+export const SINK_PATH = defaultSinkPath();
 
 export interface SubagentSummary {
   agent_type: string;
@@ -111,12 +122,12 @@ export function filterByProject(events: FathomEvent[], projectDir: string): Fath
   return events.filter((e) => e.project_dir === normalized);
 }
 
-export async function readEvents(sinKPath = SINK_PATH): Promise<FathomEvent[]> {
-  if (!fs.existsSync(sinKPath)) return [];
+export async function readEvents(sinkPath: string = defaultSinkPath()): Promise<FathomEvent[]> {
+  if (!fs.existsSync(sinkPath)) return [];
 
   const events: FathomEvent[] = [];
   const rl = readline.createInterface({
-    input: fs.createReadStream(sinKPath),
+    input: fs.createReadStream(sinkPath),
     crlfDelay: Infinity,
   });
 

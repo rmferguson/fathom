@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -7,6 +7,8 @@ import {
   loadSettings,
   installHooks,
   removeHooks,
+  runInstall,
+  runUninstall,
   CAPTURE_SCRIPT,
 } from "./install";
 
@@ -162,5 +164,98 @@ describe("removeHooks", () => {
     const { settings } = removeHooks(installed);
     expect(settings.model).toBe("sonnet");
     expect(settings.theme).toBe("dark");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runInstall / runUninstall: drive the full filesystem flow against a sandbox
+// settings.json. These exercise the public API the CLI calls into.
+// ---------------------------------------------------------------------------
+
+describe("runInstall / runUninstall (filesystem)", () => {
+  let tmpDir: string;
+  let cwdSpy: ReturnType<typeof vi.spyOn>;
+  let logSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-install-"));
+    // local=true installs to <cwd>/.claude/settings.local.json — point cwd at our sandbox
+    cwdSpy = vi.spyOn(process, "cwd").mockReturnValue(tmpDir);
+    logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    cwdSpy.mockRestore();
+    logSpy.mockRestore();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("runInstall(local=true) creates settings.local.json with all 10 hook events", () => {
+    runInstall(true);
+    const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
+    expect(fs.existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    for (const event of HOOK_EVENTS) {
+      expect(settings.hooks[event], `missing ${event}`).toBeDefined();
+      expect(settings.hooks[event][0].hooks[0].command).toBe(`node ${CAPTURE_SCRIPT}`);
+    }
+  });
+
+  it("runInstall preserves existing non-fathom settings", () => {
+    const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      model: "sonnet",
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
+        ],
+      },
+    }));
+    runInstall(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.model).toBe("sonnet");
+    // both the original entry and the fathom entry should be present
+    expect(settings.hooks.PostToolUse).toHaveLength(2);
+  });
+
+  it("runInstall is idempotent (running twice yields one entry per event)", () => {
+    runInstall(true);
+    runInstall(true);
+    const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    for (const event of HOOK_EVENTS) {
+      expect(settings.hooks[event]).toHaveLength(1);
+    }
+  });
+
+  it("runUninstall on missing settings file is a no-op", () => {
+    // No settings file exists.
+    expect(() => runUninstall(true)).not.toThrow();
+  });
+
+  it("runUninstall removes fathom entries and prunes hooks key", () => {
+    runInstall(true);
+    runUninstall(true);
+    const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings).not.toHaveProperty("hooks");
+  });
+
+  it("runUninstall preserves non-fathom hooks", () => {
+    const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
+    fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+    fs.writeFileSync(settingsPath, JSON.stringify({
+      hooks: {
+        PostToolUse: [
+          { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
+        ],
+      },
+    }));
+    runInstall(true);
+    runUninstall(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings.hooks.PostToolUse).toHaveLength(1);
+    expect(settings.hooks.PostToolUse[0].matcher).toBe("Bash");
   });
 });
