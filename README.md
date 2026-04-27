@@ -96,6 +96,57 @@ fathom uninstall              # global ~/.claude/settings.json
 fathom uninstall --local      # project-local .claude/settings.local.json
 ```
 
+## Schema versioning
+
+Every event written to the sink carries a `schema_version` field (currently `1.0.0`). Downstream consumers should pin to a major version range and fail fast on a mismatch:
+
+```ts
+import type { FathomEvent } from "@aquarium-tools/fathom";
+
+const SUPPORTED_MAJOR = 1;
+function check(e: FathomEvent) {
+  const major = parseInt(e.schema_version.split(".")[0], 10);
+  if (major !== SUPPORTED_MAJOR) {
+    throw new Error(`Unsupported fathom schema ${e.schema_version}`);
+  }
+}
+```
+
+Versioning rules fathom commits to:
+
+- **Patch** (`1.0.x`): bug fixes that don't change wire format. Always safe.
+- **Minor** (`1.x.0`): additive only. New optional fields, new event types, new payload variants. Existing consumers keep working.
+- **Major** (`x.0.0`): breaking. Field removal, renames, or type changes. Consumers must opt in by widening their pinned range.
+
+What this means in practice:
+
+- Treat any field marked optional in `src/schema/v1.ts` as truly optional — it may be absent on older or newer events.
+- New `event_type` values may appear within a major version. Use a default branch in your switch statements rather than asserting the union is exhaustive.
+- The `hook_source` field on `session_end` events is the contract between fathom's capture and aggregation layers; consumers using `aggregate()` shouldn't need to look at it directly.
+
+## Cost estimation
+
+`fathom summary` and `fathom trend` print an estimated USD cost for Agent-tool usage when token data is present. Defaults assume Claude Sonnet pricing. Override via env vars (USD per 1M tokens):
+
+```bash
+export FATHOM_PRICE_INPUT=3
+export FATHOM_PRICE_OUTPUT=15
+export FATHOM_PRICE_CACHE_READ=0.3
+export FATHOM_PRICE_CACHE_WRITE=3.75
+```
+
+Cost only reflects Agent-tool spend (the only place hooks expose tokens). Treat it as an order-of-magnitude estimate, not an invoice.
+
+## Time-range filtering
+
+All commands accept ISO 8601 `--since` and `--until` bounds:
+
+```bash
+fathom summary --since 2026-04-01T00:00:00Z
+fathom trend   --since 2026-04-01 --until 2026-04-21
+fathom export  --since 2026-04-21T12:00:00Z --format json
+```
+
 ## How it works
 
 Fathom is *workflow telemetry*, not model telemetry.

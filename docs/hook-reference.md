@@ -5,7 +5,42 @@
 
 ---
 
-## Hook Event Types
+## What fathom captures vs. what it ignores
+
+Claude Code emits ~30 hook event types. Fathom captures only the subset that maps to a workload metric. Anything not in the **Captured** column below is silently dropped at `src/hooks/capture.ts` (see the rationale comment there).
+
+| Hook event | Captured? | Mapped event_type | Notes |
+|---|---|---|---|
+| `SessionStart` | yes | `session_start` | cwd, permission_mode |
+| `SessionEnd` | yes | `session_end` | hook_source = "SessionEnd" |
+| `Stop` | yes | `session_end` | hook_source = "Stop" — wins coalesce |
+| `PreToolUse` | yes | `tool_start` | input_size_bytes only |
+| `PostToolUse` | yes | `tool_use` | tokens only on Agent tool |
+| `PostToolUseFailure` | yes | `tool_failure` | dedupes against tool_use{success:false} |
+| `Notification` | yes | `notification` | message + level |
+| `SubagentStart` | yes | `subagent_start` | agent_id, agent_type |
+| `SubagentStop` | yes | `subagent_stop` | + agent_transcript_path, last_assistant_message |
+| `PreCompact` | yes | `pre_compact` | bare event |
+| `UserPromptSubmit` | no | — | prompt text only; no metric value |
+| `PermissionRequest` | no | — | workflow signal, not workload |
+| `PermissionDenied` | no | — | workflow signal, not workload |
+| `PostCompact` | no | — | PreCompact already covers compactions |
+| `StopFailure` | no | — | rare; SessionEnd covers the boundary |
+| `ConfigChange` | no | — | environmental, not workload |
+| `CwdChanged` | no | — | environmental |
+| `FileChanged` | no | — | environmental |
+| `TaskCreated` | no | — | task tracker; not workload |
+| `TaskCompleted` | no | — | task tracker; not workload |
+| `WorktreeCreate` | no | — | workspace plumbing |
+| `WorktreeRemove` | no | — | workspace plumbing |
+| `Elicitation` | no | — | interactive flow |
+| `ElicitationResult` | no | — | interactive flow |
+| `InstructionsLoaded` | no | — | environmental |
+| `TeammateIdle` | no | — | multi-agent coordination, out of scope |
+
+To extend fathom with a new hook event: (1) add the type to `EventType` in `src/schema/v1.ts`, (2) add a handler branch in `normalize()`, (3) wire metrics into `src/aggregator/index.ts`, (4) update this table.
+
+## Hook Event Types — full reference
 
 | Event | Fires When | Can Block? |
 |---|---|---|
