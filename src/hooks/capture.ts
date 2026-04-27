@@ -31,6 +31,27 @@ const SCHEMA_VERSION = "1.0.0";
 const DEFAULT_SINK = path.join(os.homedir(), ".fathom", "events.jsonl");
 const SINK = process.env.FATHOM_SINK ?? DEFAULT_SINK;
 
+/**
+ * Maximum bytes of stdin we'll buffer from a single hook invocation.
+ *
+ * Claude Code hook payloads are generally small (KBs to low MBs for tool
+ * responses with large content blocks). 8 MiB is comfortably above any
+ * realistic real-world payload while still preventing an unbounded
+ * accumulation that could OOM the capture process. Override via
+ * FATHOM_MAX_STDIN_BYTES if you have a legitimate larger payload.
+ *
+ * On overflow we abandon the event silently — telemetry must never block
+ * Claude Code, and oversized events are most likely an upstream bug.
+ */
+export const MAX_STDIN_BYTES = (() => {
+  const env = process.env.FATHOM_MAX_STDIN_BYTES;
+  if (env !== undefined) {
+    const n = Number(env);
+    if (Number.isFinite(n) && n > 0) return Math.floor(n);
+  }
+  return 8 * 1024 * 1024;
+})();
+
 type Rec = Record<string, unknown>;
 
 function now(): string {
@@ -174,33 +195,64 @@ export function normalize(raw: Rec): Rec | null {
   return null;
 }
 
-function main(input: string): void {
+export function main(input: string, sinkPath: string = SINK): void {
   let raw: Rec;
   try {
     raw = JSON.parse(input) as Rec;
   } catch {
-    process.exit(0); // never block Claude Code
+    return; // never block Claude Code
   }
 
   const fathomEvent = normalize(raw);
   if (fathomEvent === null) {
-    process.exit(0);
+    return;
   }
 
   try {
-    fs.mkdirSync(path.dirname(SINK), { recursive: true });
-    fs.appendFileSync(SINK, JSON.stringify(fathomEvent) + "\n");
+    fs.mkdirSync(path.dirname(sinkPath), { recursive: true });
+    fs.appendFileSync(sinkPath, JSON.stringify(fathomEvent) + "\n");
   } catch {
     // telemetry failure must never affect the session
   }
+}
 
-  process.exit(0);
+/**
+ * Read stdin into a buffer with a hard cap. Returns null if the cap is
+ * exceeded — caller should treat this as a no-op (drop the event silently).
+ * Exposed for testing.
+ */
+export function readStdinBounded(
+  stream: NodeJS.ReadableStream,
+  maxBytes: number = MAX_STDIN_BYTES
+): Promise<string | null> {
+  return new Promise((resolve) => {
+    let input = "";
+    let bytes = 0;
+    let aborted = false;
+    stream.setEncoding("utf8");
+    stream.on("data", (chunk: string) => {
+      if (aborted) return;
+      bytes += Buffer.byteLength(chunk);
+      if (bytes > maxBytes) {
+        aborted = true;
+        resolve(null);
+        return;
+      }
+      input += chunk;
+    });
+    stream.on("end", () => {
+      if (!aborted) resolve(input);
+    });
+    stream.on("error", () => {
+      if (!aborted) resolve(null);
+    });
+  });
 }
 
 if (typeof require !== "undefined" && require.main === module) {
   if (process.env.FATHOM_OFF) process.exit(0);
-  let input = "";
-  process.stdin.setEncoding("utf8");
-  process.stdin.on("data", (chunk) => { input += chunk; });
-  process.stdin.on("end", () => { main(input); });
+  readStdinBounded(process.stdin).then((input) => {
+    if (input !== null) main(input);
+    process.exit(0);
+  });
 }

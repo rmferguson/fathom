@@ -215,6 +215,16 @@ program
     for (const [tool, count] of topTools) {
       console.log(`  ${tool.padEnd(20)} ${count}`);
     }
+    if (last.cost_usd > 0) {
+      console.log(`\nEstimated cost (Agent tool only): $${last.cost_usd.toFixed(4)}`);
+    }
+    const subagentEntries = Object.values(last.subagents);
+    if (subagentEntries.length > 0) {
+      console.log(`\nSubagents`);
+      for (const sub of subagentEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+        console.log(`  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`);
+      }
+    }
     if (last.errors > 0) {
       console.log(`\nErrors: ${last.errors}`);
     }
@@ -271,7 +281,7 @@ program
       return;
     }
     const summary = aggregate(events);
-    const { total_sessions, total_tokens, top_tools } = summary;
+    const { total_sessions, total_tokens, total_cost_usd, top_tools, subagent_totals } = summary;
 
     if (opts.json) {
       const avg = total_sessions > 0 ? Math.round(total_tokens / total_sessions) : 0;
@@ -279,7 +289,9 @@ program
         total_sessions,
         total_tokens,
         avg_tokens_per_session: avg,
+        total_cost_usd,
         top_tools: top_tools.slice(0, 8),
+        subagent_totals,
         projectLabel,
       }, null, 2));
       return;
@@ -291,9 +303,19 @@ program
     if (total_sessions > 0) {
       console.log(`  Avg per session: ${Math.round(total_tokens / total_sessions).toLocaleString()}`);
     }
+    if (total_cost_usd > 0) {
+      console.log(`  Estimated cost (Agent tool only): $${total_cost_usd.toFixed(4)}`);
+    }
     console.log(`\nTop tools (all-time)`);
     for (const { tool, count } of top_tools.slice(0, 8)) {
       console.log(`  ${tool.padEnd(20)} ${count}`);
+    }
+    const subEntries = Object.values(subagent_totals);
+    if (subEntries.length > 0) {
+      console.log(`\nSubagents (all-time)`);
+      for (const sub of subEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+        console.log(`  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`);
+      }
     }
   }));
 

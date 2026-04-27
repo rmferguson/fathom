@@ -1,5 +1,9 @@
-import { describe, it, expect } from "vitest";
-import { normalize } from "./capture";
+import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
+import { Readable } from "stream";
+import { normalize, main, readStdinBounded } from "./capture";
 
 const SESSION_ID = "test-session-001";
 
@@ -281,5 +285,74 @@ describe("normalize", () => {
   it("PreCompact: pre_compact event", () => {
     const result = normalize(raw({ hook_event_name: "PreCompact" }));
     expect(result?.event_type).toBe("pre_compact");
+  });
+});
+
+describe("main", () => {
+  let tmpDir: string;
+  let sink: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-main-"));
+    sink = path.join(tmpDir, "events.jsonl");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("appends one normalized event per call", () => {
+    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
+    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
+    const lines = fs.readFileSync(sink, "utf8").trim().split("\n");
+    expect(lines).toHaveLength(2);
+    const evt = JSON.parse(lines[0]);
+    expect(evt.event_type).toBe("pre_compact");
+    expect(evt.session_id).toBe("s-1");
+  });
+
+  it("creates the sink directory if missing", () => {
+    const nested = path.join(tmpDir, "a", "b", "events.jsonl");
+    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), nested);
+    expect(fs.existsSync(nested)).toBe(true);
+  });
+
+  it("silently drops malformed JSON without throwing or writing", () => {
+    expect(() => main("not json {", sink)).not.toThrow();
+    expect(fs.existsSync(sink)).toBe(false);
+  });
+
+  it("silently drops events normalize() rejects (unknown hook_event_name)", () => {
+    main(JSON.stringify({ session_id: "s-1", hook_event_name: "Unknown" }), sink);
+    expect(fs.existsSync(sink)).toBe(false);
+  });
+});
+
+describe("readStdinBounded", () => {
+  it("returns the full string when under the cap", async () => {
+    const stream = Readable.from(["hello ", "world"]);
+    const result = await readStdinBounded(stream, 1024);
+    expect(result).toBe("hello world");
+  });
+
+  it("returns null when input exceeds the cap", async () => {
+    const big = "x".repeat(2048);
+    const stream = Readable.from([big]);
+    const result = await readStdinBounded(stream, 1024);
+    expect(result).toBeNull();
+  });
+
+  it("returns null on stream error", async () => {
+    const stream = new Readable({ read() {} });
+    const promise = readStdinBounded(stream, 1024);
+    stream.emit("error", new Error("boom"));
+    expect(await promise).toBeNull();
+  });
+
+  it("respects the cap across multiple chunks", async () => {
+    // Each chunk fits but the running total exceeds the cap on the second.
+    const stream = Readable.from(["a".repeat(800), "b".repeat(800)]);
+    const result = await readStdinBounded(stream, 1024);
+    expect(result).toBeNull();
   });
 });
