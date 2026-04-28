@@ -19,9 +19,6 @@ export function defaultSinkPath(): string {
   return process.env.FATHOM_SINK ?? path.join(os.homedir(), ".fathom", "events.jsonl");
 }
 
-// Backwards-compatible export — captures the value at import time. Most call
-// sites should prefer defaultSinkPath() so env-var overrides at runtime work.
-export const SINK_PATH = defaultSinkPath();
 
 export interface SubagentSummary {
   agent_type: string;

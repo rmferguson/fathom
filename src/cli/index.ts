@@ -2,7 +2,7 @@
 import * as path from "path";
 import { execSync } from "child_process";
 import { Command } from "commander";
-import { readEvents, aggregate, filterByProject, SINK_PATH } from "../aggregator";
+import { readEvents, aggregate, filterByProject } from "../aggregator";
 import { FathomEvent } from "../schema/v1";
 import { runInstall, runUninstall } from "../install";
 

@@ -126,7 +126,13 @@ What this means in practice:
 
 ## Cost estimation
 
-`fathom summary` and `fathom trend` print an estimated USD cost for Agent-tool usage when token data is present. Defaults assume Claude Sonnet pricing. Override via env vars (USD per 1M tokens):
+`fathom summary` and `fathom trend` print an estimated USD cost for Agent-tool usage when token data is present.
+
+**Two hard limits apply:**
+- Cost only reflects Agent-tool spend — the only place Claude Code hooks expose token counts. Top-level orchestrator token usage is not counted.
+- The hook API does not tell you which model handled a turn, so a single rate is applied to all subagent spend.
+
+Defaults match Claude Sonnet pricing (USD per 1M tokens):
 
 ```bash
 export FATHOM_PRICE_INPUT=3
@@ -135,7 +141,16 @@ export FATHOM_PRICE_CACHE_READ=0.3
 export FATHOM_PRICE_CACHE_WRITE=3.75
 ```
 
-Cost only reflects Agent-tool spend (the only place hooks expose tokens). Treat it as an order-of-magnitude estimate, not an invoice.
+If your agents run on Opus, the default estimate will be roughly 5× too low. Override with Opus rates:
+
+```bash
+export FATHOM_PRICE_INPUT=15
+export FATHOM_PRICE_OUTPUT=75
+export FATHOM_PRICE_CACHE_READ=1.5
+export FATHOM_PRICE_CACHE_WRITE=18.75
+```
+
+Treat cost output as order-of-magnitude, not an invoice.
 
 ## Time-range filtering
 
