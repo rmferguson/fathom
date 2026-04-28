@@ -3,12 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import {
-  resolveProject,
-  filterByTimeRange,
-  parseCount,
-  ProjectNotFoundError,
-} from "./index";
+import { resolveProject, filterByTimeRange, parseCount, ProjectNotFoundError } from "./index";
 import { FathomEvent } from "../schema/v1";
 
 const CLI_PATH = path.resolve(__dirname, "index.ts");
@@ -166,14 +161,16 @@ describe("fathom CLI (integration)", () => {
   const PROJECT = "/test/proj";
 
   function writeEvents(events: Partial<FathomEvent>[]) {
-    const lines = events.map((e) => JSON.stringify({
-      schema_version: "1.0.0",
-      session_id: "sess-1",
-      project_dir: PROJECT,
-      timestamp: "2026-04-21T10:00:00Z",
-      payload: {},
-      ...e,
-    }));
+    const lines = events.map((e) =>
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-1",
+        project_dir: PROJECT,
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: {},
+        ...e,
+      })
+    );
     fs.writeFileSync(sink, lines.join("\n") + "\n");
   }
 
@@ -195,11 +192,31 @@ describe("fathom CLI (integration)", () => {
 
   it("summary: prints session id, tokens, and top tools", () => {
     writeEvents([
-      { event_type: "session_start", timestamp: "2026-04-21T10:00:00Z", payload: { cwd: "/x", permission_mode: "default" } },
-      { event_type: "tool_use", timestamp: "2026-04-21T10:01:00Z", payload: { tool_name: "Bash", tool_use_id: "1", success: true } },
-      { event_type: "tool_use", timestamp: "2026-04-21T10:02:00Z", payload: { tool_name: "Bash", tool_use_id: "2", success: true } },
-      { event_type: "tool_use", timestamp: "2026-04-21T10:03:00Z", payload: { tool_name: "Read", tool_use_id: "3", success: true } },
-      { event_type: "session_end", timestamp: "2026-04-21T10:05:00Z", payload: { cwd: "/x", hook_source: "Stop", last_assistant_message: "done" } },
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "1", success: true },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:02:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "2", success: true },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:03:00Z",
+        payload: { tool_name: "Read", tool_use_id: "3", success: true },
+      },
+      {
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:05:00Z",
+        payload: { cwd: "/x", hook_source: "Stop", last_assistant_message: "done" },
+      },
     ]);
     const r = runCli(["summary"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -211,8 +228,16 @@ describe("fathom CLI (integration)", () => {
 
   it("summary --json: emits parseable JSON", () => {
     writeEvents([
-      { event_type: "session_start", timestamp: "2026-04-21T10:00:00Z", payload: { cwd: "/x", permission_mode: "default" } },
-      { event_type: "tool_use", timestamp: "2026-04-21T10:01:00Z", payload: { tool_name: "Bash", tool_use_id: "1", success: true } },
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "1", success: true },
+      },
     ]);
     const r = runCli(["summary", "--json"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -240,7 +265,11 @@ describe("fathom CLI (integration)", () => {
 
   it("sessions: invalid --count falls back to default with warning", () => {
     writeEvents([
-      { event_type: "session_start", timestamp: "2026-04-21T10:00:00Z", payload: { cwd: "/x", permission_mode: "default" } },
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
     ]);
     const r = runCli(["sessions", "-n", "abc"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -250,11 +279,17 @@ describe("fathom CLI (integration)", () => {
   it("trend --json: includes total_cost_usd and subagent_totals", () => {
     writeEvents([
       { event_type: "subagent_start", payload: { agent_id: "a-1", agent_type: "general-purpose" } },
-      { event_type: "subagent_stop",  payload: { agent_id: "a-1", agent_type: "general-purpose" } },
-      { event_type: "tool_use", payload: {
-        tool_name: "Agent", tool_use_id: "1", success: true,
-        input_tokens: 1_000_000, output_tokens: 0,
-      } },
+      { event_type: "subagent_stop", payload: { agent_id: "a-1", agent_type: "general-purpose" } },
+      {
+        event_type: "tool_use",
+        payload: {
+          tool_name: "Agent",
+          tool_use_id: "1",
+          success: true,
+          input_tokens: 1_000_000,
+          output_tokens: 0,
+        },
+      },
     ]);
     const r = runCli(["trend", "--json"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -265,8 +300,16 @@ describe("fathom CLI (integration)", () => {
 
   it("export: defaults to JSONL, one event per line", () => {
     writeEvents([
-      { event_type: "session_start", timestamp: "2026-04-21T10:00:00Z", payload: { cwd: "/x", permission_mode: "default" } },
-      { event_type: "tool_use", timestamp: "2026-04-21T10:01:00Z", payload: { tool_name: "Bash", tool_use_id: "1", success: true } },
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "1", success: true },
+      },
     ]);
     const r = runCli(["export"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -277,7 +320,11 @@ describe("fathom CLI (integration)", () => {
 
   it("export --format json: emits a single pretty-printed array", () => {
     writeEvents([
-      { event_type: "tool_use", timestamp: "2026-04-21T10:01:00Z", payload: { tool_name: "Bash", tool_use_id: "1", success: true } },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "1", success: true },
+      },
     ]);
     const r = runCli(["export", "--format", "json"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -288,8 +335,16 @@ describe("fathom CLI (integration)", () => {
 
   it("export --since: filters by timestamp", () => {
     writeEvents([
-      { event_type: "tool_use", timestamp: "2026-04-20T10:00:00Z", payload: { tool_name: "A", tool_use_id: "1", success: true } },
-      { event_type: "tool_use", timestamp: "2026-04-22T10:00:00Z", payload: { tool_name: "B", tool_use_id: "2", success: true } },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-20T10:00:00Z",
+        payload: { tool_name: "A", tool_use_id: "1", success: true },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-22T10:00:00Z",
+        payload: { tool_name: "B", tool_use_id: "2", success: true },
+      },
     ]);
     const r = runCli(["export", "--since", "2026-04-21T00:00:00Z"], { sink, project: PROJECT });
     expect(r.status).toBe(0);
@@ -310,8 +365,16 @@ describe("fathom CLI (integration)", () => {
 
   it("projects: prints recorded project dirs", () => {
     writeEvents([
-      { event_type: "tool_use", payload: { tool_name: "B", tool_use_id: "1", success: true }, project_dir: "/a/x" },
-      { event_type: "tool_use", payload: { tool_name: "B", tool_use_id: "2", success: true }, project_dir: "/b/y" },
+      {
+        event_type: "tool_use",
+        payload: { tool_name: "B", tool_use_id: "1", success: true },
+        project_dir: "/a/x",
+      },
+      {
+        event_type: "tool_use",
+        payload: { tool_name: "B", tool_use_id: "2", success: true },
+        project_dir: "/b/y",
+      },
     ]);
     const r = runCli(["projects"], { sink });
     expect(r.status).toBe(0);
@@ -349,12 +412,34 @@ describe("e2e: capture → sink → aggregate", () => {
       main(JSON.stringify({ session_id: session, ...payload }), sink);
 
     send({ hook_event_name: "SessionStart", cwd: "/proj", permission_mode: "default" });
-    send({ hook_event_name: "PreToolUse", tool_name: "Bash", tool_use_id: "tu-1", tool_input: { command: "ls" } });
-    send({ hook_event_name: "PostToolUse", tool_name: "Bash", tool_use_id: "tu-1", tool_response: { interrupted: false, totalDurationMs: 50 } });
-    send({ hook_event_name: "PostToolUse", tool_name: "Agent", tool_use_id: "tu-2", tool_response: {
-      status: "completed", totalTokens: 1000, totalDurationMs: 5000,
-      usage: { input_tokens: 800, output_tokens: 150, cache_read_input_tokens: 50, cache_creation_input_tokens: 0 },
-    } });
+    send({
+      hook_event_name: "PreToolUse",
+      tool_name: "Bash",
+      tool_use_id: "tu-1",
+      tool_input: { command: "ls" },
+    });
+    send({
+      hook_event_name: "PostToolUse",
+      tool_name: "Bash",
+      tool_use_id: "tu-1",
+      tool_response: { interrupted: false, totalDurationMs: 50 },
+    });
+    send({
+      hook_event_name: "PostToolUse",
+      tool_name: "Agent",
+      tool_use_id: "tu-2",
+      tool_response: {
+        status: "completed",
+        totalTokens: 1000,
+        totalDurationMs: 5000,
+        usage: {
+          input_tokens: 800,
+          output_tokens: 150,
+          cache_read_input_tokens: 50,
+          cache_creation_input_tokens: 0,
+        },
+      },
+    });
     send({ hook_event_name: "SubagentStart", agent_id: "a-1", agent_type: "general-purpose" });
     send({ hook_event_name: "SubagentStop", agent_id: "a-1", agent_type: "general-purpose" });
     send({ hook_event_name: "Stop", cwd: "/proj", last_assistant_message: "done" });
@@ -374,5 +459,120 @@ describe("e2e: capture → sink → aggregate", () => {
     expect(s.cost_usd).toBeGreaterThan(0);
     // Session ends were coalesced (Stop + SessionEnd) → only 1 session.
     expect(s.ended_at).toBeDefined();
+  });
+});
+
+describe("fathom prune (CLI)", () => {
+  let tmpDir: string;
+  let sink: string;
+
+  function writeLines(lines: object[]): void {
+    fs.writeFileSync(sink, lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+  }
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-prune-cli-"));
+    sink = path.join(tmpDir, "events.jsonl");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("errors when neither --before nor --keep-days is given", () => {
+    fs.writeFileSync(sink, "");
+    const r = runCli(["prune", "--yes"], { sink });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("--before");
+  });
+
+  it("errors when both --before and --keep-days are given", () => {
+    fs.writeFileSync(sink, "");
+    const r = runCli(["prune", "--before", "2026-01-01", "--keep-days", "30", "--yes"], { sink });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("not both");
+  });
+
+  it("errors on invalid --before value", () => {
+    fs.writeFileSync(sink, "");
+    const r = runCli(["prune", "--before", "not-a-date", "--yes"], { sink });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Invalid --before");
+  });
+
+  it("errors on non-integer --keep-days", () => {
+    fs.writeFileSync(sink, "");
+    const r = runCli(["prune", "--keep-days", "abc", "--yes"], { sink });
+    expect(r.status).toBe(1);
+    expect(r.stderr).toContain("Invalid --keep-days");
+  });
+
+  it("reports nothing removed when all events are recent", () => {
+    writeLines([
+      {
+        schema_version: "1.0.0",
+        event_type: "pre_compact",
+        timestamp: "2026-04-20T00:00:00Z",
+        session_id: "s1",
+        project_dir: "/p",
+        payload: {},
+      },
+    ]);
+    const r = runCli(["prune", "--before", "2026-01-01", "--yes"], { sink });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("No events before");
+  });
+
+  it("removes old events and reports count with --before", () => {
+    writeLines([
+      {
+        schema_version: "1.0.0",
+        event_type: "pre_compact",
+        timestamp: "2025-06-01T00:00:00Z",
+        session_id: "s1",
+        project_dir: "/p",
+        payload: {},
+      },
+      {
+        schema_version: "1.0.0",
+        event_type: "pre_compact",
+        timestamp: "2026-04-20T00:00:00Z",
+        session_id: "s2",
+        project_dir: "/p",
+        payload: {},
+      },
+    ]);
+    const r = runCli(["prune", "--before", "2026-01-01", "--yes"], { sink });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/Removed 1 event/);
+    expect(r.stdout).toContain("1 event remaining");
+    const remaining = fs.readFileSync(sink, "utf8").trim().split("\n");
+    expect(remaining).toHaveLength(1);
+    expect(JSON.parse(remaining[0]).session_id).toBe("s2");
+  });
+
+  it("removes old events with --keep-days", () => {
+    // Use a very large keep-days to ensure the old event is always pruned.
+    writeLines([
+      {
+        schema_version: "1.0.0",
+        event_type: "pre_compact",
+        timestamp: "2020-01-01T00:00:00Z",
+        session_id: "s1",
+        project_dir: "/p",
+        payload: {},
+      },
+      {
+        schema_version: "1.0.0",
+        event_type: "pre_compact",
+        timestamp: "2026-04-20T00:00:00Z",
+        session_id: "s2",
+        project_dir: "/p",
+        payload: {},
+      },
+    ]);
+    const r = runCli(["prune", "--keep-days", "30", "--yes"], { sink });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/Removed 1 event/);
   });
 });

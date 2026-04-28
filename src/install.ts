@@ -19,16 +19,16 @@ export const HOOK_COMMAND = `node ${CAPTURE_SCRIPT}`;
 
 // Hook registrations: event → matcher (empty string = all tools)
 export const HOOKS = [
-  { event: "PostToolUse",        matcher: "" },
-  { event: "PreToolUse",         matcher: "" },
+  { event: "PostToolUse", matcher: "" },
+  { event: "PreToolUse", matcher: "" },
   { event: "PostToolUseFailure", matcher: "" },
-  { event: "SessionStart",       matcher: "" },
-  { event: "SessionEnd",         matcher: "" },
-  { event: "Stop",               matcher: "" },
-  { event: "Notification",       matcher: "" },
-  { event: "SubagentStart",      matcher: "" },
-  { event: "SubagentStop",       matcher: "" },
-  { event: "PreCompact",         matcher: "" },
+  { event: "SessionStart", matcher: "" },
+  { event: "SessionEnd", matcher: "" },
+  { event: "Stop", matcher: "" },
+  { event: "Notification", matcher: "" },
+  { event: "SubagentStart", matcher: "" },
+  { event: "SubagentStop", matcher: "" },
+  { event: "PreCompact", matcher: "" },
 ];
 
 export function getSettingsPath(local: boolean): string {
@@ -62,9 +62,7 @@ function isFathomEntry(entry: { hooks: unknown[] }): boolean {
   );
 }
 
-export function installHooks(
-  settings: Record<string, unknown>
-): Record<string, unknown> {
+export function installHooks(settings: Record<string, unknown>): Record<string, unknown> {
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
 
   for (const { event, matcher } of HOOKS) {
@@ -87,9 +85,10 @@ export function installHooks(
   return { ...settings, hooks };
 }
 
-export function removeHooks(
-  settings: Record<string, unknown>
-): { settings: Record<string, unknown>; removed: number } {
+export function removeHooks(settings: Record<string, unknown>): {
+  settings: Record<string, unknown>;
+  removed: number;
+} {
   const hooks = (settings.hooks ?? {}) as Record<string, unknown[]>;
   let removed = 0;
 
@@ -128,7 +127,9 @@ export function runUninstall(local: boolean): void {
     console.log(`No fathom hooks found in ${settingsPath}`);
   } else {
     fs.writeFileSync(settingsPath, JSON.stringify(updated, null, 2) + "\n");
-    console.log(`Removed ${removed} fathom hook ${removed === 1 ? "entry" : "entries"} from ${settingsPath}`);
+    console.log(
+      `Removed ${removed} fathom hook ${removed === 1 ? "entry" : "entries"} from ${settingsPath}`
+    );
   }
 }
 

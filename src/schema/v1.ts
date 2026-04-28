@@ -26,9 +26,9 @@ export type EventType =
 export interface FathomEvent {
   schema_version: string;
   event_type: EventType;
-  timestamp: string;        // ISO 8601 UTC
+  timestamp: string; // ISO 8601 UTC
   session_id: string;
-  project_dir: string;      // absolute path — CLAUDE_PROJECT_DIR or cwd fallback
+  project_dir: string; // absolute path — CLAUDE_PROJECT_DIR or cwd fallback
   payload: EventPayload;
 }
 

@@ -17,13 +17,16 @@
     "dev": "tsx src/cli/index.ts",
     "install-hooks": "tsx scripts/install.ts",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\""
   },
   "dependencies": {
     "commander": "^12.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
+    "prettier": "^3.8.3",
     "tsx": "^4.0.0",
     "typescript": "^5.0.0",
     "vitest": "^4.1.5"

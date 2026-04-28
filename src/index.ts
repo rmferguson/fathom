@@ -28,7 +28,9 @@ export {
 export {
   readEvents,
   aggregate,
+  pruneEvents,
   defaultSinkPath,
   type SessionSummary,
   type AggregateSummary,
+  type PruneResult,
 } from "./aggregator";

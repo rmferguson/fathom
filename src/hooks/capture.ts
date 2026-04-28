@@ -63,8 +63,10 @@ export function normalize(raw: Rec): Rec | null {
   const sessionId = (raw.session_id as string) ?? "";
   const ts = now();
 
-  const projectDir =
-    (process.env.CLAUDE_PROJECT_DIR ?? (raw.cwd as string) ?? "").replace(/\/$/, "");
+  const projectDir = (process.env.CLAUDE_PROJECT_DIR ?? (raw.cwd as string) ?? "").replace(
+    /\/$/,
+    ""
+  );
 
   const event = (eventType: string, payload: Rec): Rec => ({
     schema_version: SCHEMA_VERSION,
@@ -82,7 +84,7 @@ export function normalize(raw: Rec): Rec | null {
     const success =
       toolName === "Agent"
         ? response.status === "completed"
-        : !(response.interrupted as boolean ?? false);
+        : !((response.interrupted as boolean) ?? false);
     const payload: Rec = {
       tool_name: toolName,
       tool_use_id: raw.tool_use_id ?? "",

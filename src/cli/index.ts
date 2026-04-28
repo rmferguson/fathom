@@ -2,7 +2,13 @@
 import * as path from "path";
 import { execSync } from "child_process";
 import { Command } from "commander";
-import { readEvents, aggregate, filterByProject } from "../aggregator";
+import {
+  readEvents,
+  aggregate,
+  filterByProject,
+  pruneEvents,
+  defaultSinkPath,
+} from "../aggregator";
 import { FathomEvent } from "../schema/v1";
 import { runInstall, runUninstall } from "../install";
 
@@ -13,7 +19,10 @@ import { runInstall, runUninstall } from "../install";
  * make resolveProject untestable).
  */
 export class ProjectNotFoundError extends Error {
-  constructor(message: string, readonly knownDirs: string[]) {
+  constructor(
+    message: string,
+    readonly knownDirs: string[]
+  ) {
     super(message);
     this.name = "ProjectNotFoundError";
   }
@@ -83,7 +92,12 @@ export function filterByTimeRange(
   });
 }
 
-interface LoadOpts { all?: boolean; project?: string; since?: string; until?: string }
+interface LoadOpts {
+  all?: boolean;
+  project?: string;
+  since?: string;
+  until?: string;
+}
 
 // Cache readEvents() result for the lifetime of the CLI process so commands
 // that call loadEvents() multiple times don't re-read the JSONL each time.
@@ -172,65 +186,69 @@ program
   .option("--since <iso>", "Only include events at or after this ISO timestamp")
   .option("--until <iso>", "Only include events at or before this ISO timestamp")
   .option("--json", "Emit machine-readable JSON instead of formatted text")
-  .action(runAction(async (opts) => {
-    const { events, projectLabel } = await loadEvents(opts as LoadOpts);
-    if (events.length === 0) {
-      if (opts.json) console.log(JSON.stringify({ session: null, projectLabel }));
-      else console.log("No events recorded yet. Run: fathom install");
-      return;
-    }
-    const { sessions } = aggregate(events);
-    const last = sessions[0];
-    if (!last) {
-      if (opts.json) console.log(JSON.stringify({ session: null, projectLabel }));
-      else console.log("No sessions found.");
-      return;
-    }
+  .action(
+    runAction(async (opts) => {
+      const { events, projectLabel } = await loadEvents(opts as LoadOpts);
+      if (events.length === 0) {
+        if (opts.json) console.log(JSON.stringify({ session: null, projectLabel }));
+        else console.log("No events recorded yet. Run: fathom install");
+        return;
+      }
+      const { sessions } = aggregate(events);
+      const last = sessions[0];
+      if (!last) {
+        if (opts.json) console.log(JSON.stringify({ session: null, projectLabel }));
+        else console.log("No sessions found.");
+        return;
+      }
 
-    if (opts.json) {
+      if (opts.json) {
+        const topTools = Object.entries(last.tool_calls)
+          .sort(([, a], [, b]) => b - a)
+          .slice(0, 5)
+          .map(([tool, count]) => ({ tool, count }));
+        console.log(JSON.stringify({ session: last, top_tools: topTools, projectLabel }, null, 2));
+        return;
+      }
+
+      const durationStr = last.wall_time_ms
+        ? `${(last.wall_time_ms / 60000).toFixed(1)}m`
+        : "unknown";
+
       const topTools = Object.entries(last.tool_calls)
         .sort(([, a], [, b]) => b - a)
-        .slice(0, 5)
-        .map(([tool, count]) => ({ tool, count }));
-      console.log(JSON.stringify({ session: last, top_tools: topTools, projectLabel }, null, 2));
-      return;
-    }
+        .slice(0, 5);
 
-    const durationStr = last.wall_time_ms
-      ? `${(last.wall_time_ms / 60000).toFixed(1)}m`
-      : "unknown";
-
-    const topTools = Object.entries(last.tool_calls)
-      .sort(([, a], [, b]) => b - a)
-      .slice(0, 5);
-
-    if (projectLabel) console.log(`\nProject: ${projectLabel}`);
-    console.log(`\nSession: ${last.session_id.slice(0, 8)}...`);
-    console.log(`Started: ${last.started_at}`);
-    console.log(`Duration: ${durationStr}`);
-    console.log(`\nTokens`);
-    console.log(`  Total:        ${last.total_tokens.toLocaleString()}`);
-    console.log(`  Input:        ${last.input_tokens.toLocaleString()}`);
-    console.log(`  Output:       ${last.output_tokens.toLocaleString()}`);
-    console.log(`  Cache read:   ${last.cache_read_tokens.toLocaleString()}`);
-    console.log(`\nTop tools`);
-    for (const [tool, count] of topTools) {
-      console.log(`  ${tool.padEnd(20)} ${count}`);
-    }
-    if (last.cost_usd > 0) {
-      console.log(`\nEstimated cost (Agent tool only): $${last.cost_usd.toFixed(4)}`);
-    }
-    const subagentEntries = Object.values(last.subagents);
-    if (subagentEntries.length > 0) {
-      console.log(`\nSubagents`);
-      for (const sub of subagentEntries.sort((a, b) => b.dispatches - a.dispatches)) {
-        console.log(`  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`);
+      if (projectLabel) console.log(`\nProject: ${projectLabel}`);
+      console.log(`\nSession: ${last.session_id.slice(0, 8)}...`);
+      console.log(`Started: ${last.started_at}`);
+      console.log(`Duration: ${durationStr}`);
+      console.log(`\nTokens`);
+      console.log(`  Total:        ${last.total_tokens.toLocaleString()}`);
+      console.log(`  Input:        ${last.input_tokens.toLocaleString()}`);
+      console.log(`  Output:       ${last.output_tokens.toLocaleString()}`);
+      console.log(`  Cache read:   ${last.cache_read_tokens.toLocaleString()}`);
+      console.log(`\nTop tools`);
+      for (const [tool, count] of topTools) {
+        console.log(`  ${tool.padEnd(20)} ${count}`);
       }
-    }
-    if (last.errors > 0) {
-      console.log(`\nErrors: ${last.errors}`);
-    }
-  }));
+      if (last.cost_usd > 0) {
+        console.log(`\nEstimated cost (Agent tool only): $${last.cost_usd.toFixed(4)}`);
+      }
+      const subagentEntries = Object.values(last.subagents);
+      if (subagentEntries.length > 0) {
+        console.log(`\nSubagents`);
+        for (const sub of subagentEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+          console.log(
+            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`
+          );
+        }
+      }
+      if (last.errors > 0) {
+        console.log(`\nErrors: ${last.errors}`);
+      }
+    })
+  );
 
 program
   .command("sessions")
@@ -240,32 +258,38 @@ program
   .option("--project <name>", "Filter by project name or path")
   .option("--since <iso>", "Only include events at or after this ISO timestamp")
   .option("--until <iso>", "Only include events at or before this ISO timestamp")
-  .action(runAction(async (opts) => {
-    const { events, projectLabel } = await loadEvents(opts as LoadOpts);
-    if (events.length === 0) {
-      console.log("No events recorded yet. Run: fathom install");
-      return;
-    }
-    const { sessions } = aggregate(events);
-    const n = parseCount(opts.count as string | undefined, 10);
+  .action(
+    runAction(async (opts) => {
+      const { events, projectLabel } = await loadEvents(opts as LoadOpts);
+      if (events.length === 0) {
+        console.log("No events recorded yet. Run: fathom install");
+        return;
+      }
+      const { sessions } = aggregate(events);
+      const n = parseCount(opts.count as string | undefined, 10);
 
-    if (projectLabel) console.log(`\nProject: ${projectLabel}`);
-    console.log(`\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`);
-    console.log("─".repeat(58));
-
-    const shown = sessions.slice(0, n);
-    for (const s of shown) {
-      const id = s.session_id.slice(0, 8) + "...";
-      const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
+      if (projectLabel) console.log(`\nProject: ${projectLabel}`);
       console.log(
-        `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+        `\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
       );
-    }
-    if (sessions.length > shown.length) {
-      const hidden = sessions.length - shown.length;
-      console.log(`\n... ${hidden} more session${hidden === 1 ? "" : "s"} not shown (total ${sessions.length}). Use -n ${sessions.length} or --count ${sessions.length} to see all.`);
-    }
-  }));
+      console.log("─".repeat(58));
+
+      const shown = sessions.slice(0, n);
+      for (const s of shown) {
+        const id = s.session_id.slice(0, 8) + "...";
+        const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
+        console.log(
+          `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+        );
+      }
+      if (sessions.length > shown.length) {
+        const hidden = sessions.length - shown.length;
+        console.log(
+          `\n... ${hidden} more session${hidden === 1 ? "" : "s"} not shown (total ${sessions.length}). Use -n ${sessions.length} or --count ${sessions.length} to see all.`
+        );
+      }
+    })
+  );
 
 program
   .command("trend")
@@ -275,51 +299,66 @@ program
   .option("--since <iso>", "Only include events at or after this ISO timestamp")
   .option("--until <iso>", "Only include events at or before this ISO timestamp")
   .option("--json", "Emit machine-readable JSON instead of formatted text")
-  .action(runAction(async (opts) => {
-    const { events, projectLabel } = await loadEvents(opts as LoadOpts);
-    if (events.length === 0) {
-      if (opts.json) console.log(JSON.stringify({ total_sessions: 0, total_tokens: 0, top_tools: [], projectLabel }));
-      else console.log("No events recorded yet. Run: fathom install");
-      return;
-    }
-    const summary = aggregate(events);
-    const { total_sessions, total_tokens, total_cost_usd, top_tools, subagent_totals } = summary;
-
-    if (opts.json) {
-      const avg = total_sessions > 0 ? Math.round(total_tokens / total_sessions) : 0;
-      console.log(JSON.stringify({
-        total_sessions,
-        total_tokens,
-        avg_tokens_per_session: avg,
-        total_cost_usd,
-        top_tools: top_tools.slice(0, 8),
-        subagent_totals,
-        projectLabel,
-      }, null, 2));
-      return;
-    }
-
-    if (projectLabel) console.log(`\nProject: ${projectLabel}`);
-    console.log(`\nAll-time across ${total_sessions} sessions`);
-    console.log(`  Total tokens:  ${total_tokens.toLocaleString()}`);
-    if (total_sessions > 0) {
-      console.log(`  Avg per session: ${Math.round(total_tokens / total_sessions).toLocaleString()}`);
-    }
-    if (total_cost_usd > 0) {
-      console.log(`  Estimated cost (Agent tool only): $${total_cost_usd.toFixed(4)}`);
-    }
-    console.log(`\nTop tools (all-time)`);
-    for (const { tool, count } of top_tools.slice(0, 8)) {
-      console.log(`  ${tool.padEnd(20)} ${count}`);
-    }
-    const subEntries = Object.values(subagent_totals);
-    if (subEntries.length > 0) {
-      console.log(`\nSubagents (all-time)`);
-      for (const sub of subEntries.sort((a, b) => b.dispatches - a.dispatches)) {
-        console.log(`  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`);
+  .action(
+    runAction(async (opts) => {
+      const { events, projectLabel } = await loadEvents(opts as LoadOpts);
+      if (events.length === 0) {
+        if (opts.json)
+          console.log(
+            JSON.stringify({ total_sessions: 0, total_tokens: 0, top_tools: [], projectLabel })
+          );
+        else console.log("No events recorded yet. Run: fathom install");
+        return;
       }
-    }
-  }));
+      const summary = aggregate(events);
+      const { total_sessions, total_tokens, total_cost_usd, top_tools, subagent_totals } = summary;
+
+      if (opts.json) {
+        const avg = total_sessions > 0 ? Math.round(total_tokens / total_sessions) : 0;
+        console.log(
+          JSON.stringify(
+            {
+              total_sessions,
+              total_tokens,
+              avg_tokens_per_session: avg,
+              total_cost_usd,
+              top_tools: top_tools.slice(0, 8),
+              subagent_totals,
+              projectLabel,
+            },
+            null,
+            2
+          )
+        );
+        return;
+      }
+
+      if (projectLabel) console.log(`\nProject: ${projectLabel}`);
+      console.log(`\nAll-time across ${total_sessions} sessions`);
+      console.log(`  Total tokens:  ${total_tokens.toLocaleString()}`);
+      if (total_sessions > 0) {
+        console.log(
+          `  Avg per session: ${Math.round(total_tokens / total_sessions).toLocaleString()}`
+        );
+      }
+      if (total_cost_usd > 0) {
+        console.log(`  Estimated cost (Agent tool only): $${total_cost_usd.toFixed(4)}`);
+      }
+      console.log(`\nTop tools (all-time)`);
+      for (const { tool, count } of top_tools.slice(0, 8)) {
+        console.log(`  ${tool.padEnd(20)} ${count}`);
+      }
+      const subEntries = Object.values(subagent_totals);
+      if (subEntries.length > 0) {
+        console.log(`\nSubagents (all-time)`);
+        for (const sub of subEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+          console.log(
+            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`
+          );
+        }
+      }
+    })
+  );
 
 program
   .command("export")
@@ -329,16 +368,18 @@ program
   .option("--project <name>", "Filter by project name or path")
   .option("--since <iso>", "Only include events at or after this ISO timestamp")
   .option("--until <iso>", "Only include events at or before this ISO timestamp")
-  .action(runAction(async (opts) => {
-    const { events } = await loadEvents(opts as LoadOpts);
-    if (opts.format === "json") {
-      console.log(JSON.stringify(events, null, 2));
-    } else {
-      for (const e of events) {
-        console.log(JSON.stringify(e));
+  .action(
+    runAction(async (opts) => {
+      const { events } = await loadEvents(opts as LoadOpts);
+      if (opts.format === "json") {
+        console.log(JSON.stringify(events, null, 2));
+      } else {
+        for (const e of events) {
+          console.log(JSON.stringify(e));
+        }
       }
-    }
-  }));
+    })
+  );
 
 program
   .command("projects")
@@ -356,9 +397,80 @@ program
   });
 
 program
+  .command("prune")
+  .description("Remove old events from the sink file")
+  .option("--before <iso>", "Drop events with a timestamp before this ISO date")
+  .option("--keep-days <n>", "Drop events older than N days (shorthand for --before)")
+  .option("--yes", "Skip confirmation prompt")
+  .action(
+    runAction(async (opts) => {
+      const before = opts.before as string | undefined;
+      const keepDays = opts.keepDays as string | undefined;
+
+      if (!before && !keepDays) {
+        console.error("Specify --before <iso> or --keep-days <n>.");
+        process.exitCode = 1;
+        return;
+      }
+      if (before && keepDays) {
+        console.error("Use --before or --keep-days, not both.");
+        process.exitCode = 1;
+        return;
+      }
+
+      let cutoffMs: number;
+      if (keepDays !== undefined) {
+        const n = Number(keepDays);
+        if (!Number.isFinite(n) || !Number.isInteger(n) || n <= 0) {
+          console.error(`Invalid --keep-days value "${keepDays}"; must be a positive integer.`);
+          process.exitCode = 1;
+          return;
+        }
+        cutoffMs = Date.now() - n * 86_400_000;
+      } else {
+        cutoffMs = Date.parse(before!);
+        if (Number.isNaN(cutoffMs)) {
+          console.error(`Invalid --before value "${before}"; expected ISO 8601.`);
+          process.exitCode = 1;
+          return;
+        }
+      }
+
+      const sinkPath = defaultSinkPath();
+      const cutoffDate = new Date(cutoffMs).toISOString().slice(0, 10);
+
+      if (!opts.yes) {
+        process.stdout.write(`Remove events before ${cutoffDate} from ${sinkPath}? [y/N] `);
+        const answer = await new Promise<string>((resolve) => {
+          process.stdin.setEncoding("utf8");
+          process.stdin.once("data", (chunk: string) => resolve(chunk.trim()));
+        });
+        if (answer.toLowerCase() !== "y") {
+          console.log("Aborted.");
+          return;
+        }
+      }
+
+      const { removed, kept, bytesRecovered } = await pruneEvents(cutoffMs, sinkPath);
+
+      if (removed === 0) {
+        console.log(`No events before ${cutoffDate} found.`);
+      } else {
+        const kb = (bytesRecovered / 1024).toFixed(1);
+        console.log(
+          `Removed ${removed} event${removed === 1 ? "" : "s"} (${kb} KB). ${kept} event${kept === 1 ? "" : "s"} remaining.`
+        );
+      }
+    })
+  );
+
+program
   .command("install")
   .description("Register fathom hook handlers in Claude Code settings")
-  .option("--local", "Install to .claude/settings.local.json in cwd instead of ~/.claude/settings.json")
+  .option(
+    "--local",
+    "Install to .claude/settings.local.json in cwd instead of ~/.claude/settings.json"
+  )
   .action((opts) => {
     runInstall(opts.local ?? false);
   });
@@ -366,7 +478,10 @@ program
 program
   .command("uninstall")
   .description("Remove fathom hook handlers from Claude Code settings")
-  .option("--local", "Uninstall from .claude/settings.local.json in cwd instead of ~/.claude/settings.json")
+  .option(
+    "--local",
+    "Uninstall from .claude/settings.local.json in cwd instead of ~/.claude/settings.json"
+  )
   .action((opts) => {
     runUninstall(opts.local ?? false);
   });
@@ -374,11 +489,7 @@ program
 // Allow importing this module from tests without auto-parsing argv. Skip the
 // CLI dispatch when loaded via `import` (require.main !== module) or when the
 // FATHOM_NO_AUTORUN escape hatch is set.
-if (
-  typeof require !== "undefined" &&
-  require.main === module &&
-  !process.env.FATHOM_NO_AUTORUN
-) {
+if (typeof require !== "undefined" && require.main === module && !process.env.FATHOM_NO_AUTORUN) {
   program.parse();
 }
 

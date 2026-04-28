@@ -19,11 +19,10 @@ export function defaultSinkPath(): string {
   return process.env.FATHOM_SINK ?? path.join(os.homedir(), ".fathom", "events.jsonl");
 }
 
-
 export interface SubagentSummary {
   agent_type: string;
-  dispatches: number;        // count of subagent_start events seen
-  completions: number;       // count of subagent_stop events seen
+  dispatches: number; // count of subagent_start events seen
+  completions: number; // count of subagent_stop events seen
 }
 
 export interface SessionSummary {
@@ -141,6 +140,79 @@ export async function readEvents(sinkPath: string = defaultSinkPath()): Promise<
   return events;
 }
 
+export interface PruneResult {
+  removed: number;
+  kept: number;
+  bytesRecovered: number;
+}
+
+/**
+ * Remove events older than cutoffMs from the sink file.
+ *
+ * Streams the sink line-by-line, writing kept lines to a sibling temp file,
+ * then atomically renames it over the sink. Malformed lines are kept (same
+ * policy as readEvents — don't silently discard records we can't parse).
+ *
+ * Returns counts for the caller to display. Throws on I/O errors so the CLI
+ * can report them cleanly without leaving a partial temp file behind.
+ */
+export async function pruneEvents(
+  cutoffMs: number,
+  sinkPath: string = defaultSinkPath()
+): Promise<PruneResult> {
+  if (!fs.existsSync(sinkPath)) return { removed: 0, kept: 0, bytesRecovered: 0 };
+
+  const tmpPath = sinkPath + ".tmp." + process.pid;
+  let removed = 0;
+  let kept = 0;
+  let bytesRemoved = 0;
+
+  try {
+    const out = fs.createWriteStream(tmpPath, { encoding: "utf8" });
+    const rl = readline.createInterface({
+      input: fs.createReadStream(sinkPath),
+      crlfDelay: Infinity,
+    });
+
+    for await (const line of rl) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+
+      let drop = false;
+      try {
+        const ev = JSON.parse(trimmed) as { timestamp?: string };
+        const ts = Date.parse(ev.timestamp ?? "");
+        if (!Number.isNaN(ts) && ts < cutoffMs) drop = true;
+      } catch {
+        // malformed line — keep it
+      }
+
+      if (drop) {
+        removed++;
+        bytesRemoved += Buffer.byteLength(line + "\n");
+      } else {
+        kept++;
+        out.write(line + "\n");
+      }
+    }
+
+    await new Promise<void>((resolve, reject) => {
+      out.end((err: Error | null | undefined) => (err ? reject(err) : resolve()));
+    });
+
+    fs.renameSync(tmpPath, sinkPath);
+  } catch (err) {
+    try {
+      fs.unlinkSync(tmpPath);
+    } catch {
+      /* best-effort cleanup */
+    }
+    throw err;
+  }
+
+  return { removed, kept, bytesRecovered: bytesRemoved };
+}
+
 /**
  * Coalesce duplicate session_end events for the same session_id.
  *
@@ -174,9 +246,7 @@ function coalesceSessionEnds(events: FathomEvent[]): FathomEvent[] {
       continue;
     }
     // Prefer hook_source: "Stop" when both are present.
-    const stopRecord = ends.find(
-      (e) => (e.payload as SessionEndPayload).hook_source === "Stop"
-    );
+    const stopRecord = ends.find((e) => (e.payload as SessionEndPayload).hook_source === "Stop");
     winners.set(sessionId, stopRecord ?? ends[ends.length - 1]);
   }
 
@@ -206,10 +276,7 @@ export interface AggregateOptions {
   costRates?: CostRates;
 }
 
-export function aggregate(
-  events: FathomEvent[],
-  options: AggregateOptions = {}
-): AggregateSummary {
+export function aggregate(events: FathomEvent[], options: AggregateOptions = {}): AggregateSummary {
   const rates = options.costRates ?? ratesFromEnv();
 
   // Deduplicate session_end events before aggregating.

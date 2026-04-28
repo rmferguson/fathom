@@ -54,6 +54,7 @@ fathom sessions     List recent sessions with tool and timing stats
 fathom trend        All-time tool call counts; token totals (Agent tool only)
 fathom projects     List all projects that have recorded events
 fathom export       Dump raw events as JSON or JSONL
+fathom prune        Remove old events from the sink file
 fathom install      Register hook handlers in Claude Code settings
 fathom uninstall    Remove hook handlers from Claude Code settings
 ```
@@ -74,6 +75,18 @@ fathom export                      # JSONL (default)
 fathom export --format json        # pretty JSON
 fathom export --all --format json > events.json
 ```
+
+### Pruning
+
+The sink file grows indefinitely. At heavy usage (~8 sessions/day) expect roughly 160 MB/year. Prune old events with:
+
+```bash
+fathom prune --keep-days 90        # drop everything older than 90 days
+fathom prune --before 2026-01-01   # drop everything before a specific date
+fathom prune --keep-days 90 --yes  # skip confirmation prompt (useful in cron)
+```
+
+Malformed lines in the sink are always kept rather than silently dropped.
 
 ## Data
 
