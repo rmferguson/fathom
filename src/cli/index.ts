@@ -130,12 +130,14 @@ export function parseCount(value: string | undefined, defaultValue: number): num
   return n;
 }
 
+const { version: pkgVersion } = require("../../package.json") as { version: string };
+
 const program = new Command();
 
 program
   .name("fathom")
   .description("Hooks-based telemetry for Claude Code sessions")
-  .version("0.1.0");
+  .version(pkgVersion);
 
 /**
  * Wraps an action handler so library exceptions (ProjectNotFoundError, bad
