@@ -3,7 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Readable } from "stream";
-import { normalize, main, readStdinBounded } from "./capture";
+import { normalize, main, readStdinBounded, readTranscriptTokens } from "./capture";
 
 const SESSION_ID = "test-session-001";
 
@@ -343,9 +343,9 @@ describe("main", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("appends one normalized event per call", () => {
-    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
-    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
+  it("appends one normalized event per call", async () => {
+    await main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
+    await main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), sink);
     const lines = fs.readFileSync(sink, "utf8").trim().split("\n");
     expect(lines).toHaveLength(2);
     const evt = JSON.parse(lines[0]);
@@ -353,19 +353,19 @@ describe("main", () => {
     expect(evt.session_id).toBe("s-1");
   });
 
-  it("creates the sink directory if missing", () => {
+  it("creates the sink directory if missing", async () => {
     const nested = path.join(tmpDir, "a", "b", "events.jsonl");
-    main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), nested);
+    await main(JSON.stringify({ session_id: "s-1", hook_event_name: "PreCompact" }), nested);
     expect(fs.existsSync(nested)).toBe(true);
   });
 
-  it("silently drops malformed JSON without throwing or writing", () => {
-    expect(() => main("not json {", sink)).not.toThrow();
+  it("silently drops malformed JSON without throwing or writing", async () => {
+    await expect(main("not json {", sink)).resolves.toBeUndefined();
     expect(fs.existsSync(sink)).toBe(false);
   });
 
-  it("silently drops events normalize() rejects (unknown hook_event_name)", () => {
-    main(JSON.stringify({ session_id: "s-1", hook_event_name: "Unknown" }), sink);
+  it("silently drops events normalize() rejects (unknown hook_event_name)", async () => {
+    await main(JSON.stringify({ session_id: "s-1", hook_event_name: "Unknown" }), sink);
     expect(fs.existsSync(sink)).toBe(false);
   });
 });
@@ -450,5 +450,240 @@ describe("extra field capture", () => {
       })
     );
     expect(result?.extra).toBeUndefined();
+  });
+});
+
+describe("readTranscriptTokens", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-transcript-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  function makeTranscript(entries: object[]): string {
+    return entries.map((e) => JSON.stringify(e)).join("\n") + "\n";
+  }
+
+  it("returns null for missing file", async () => {
+    const result = await readTranscriptTokens(path.join(tmpDir, "nonexistent.jsonl"));
+    expect(result).toBeNull();
+  });
+
+  it("returns null for empty file", async () => {
+    const p = path.join(tmpDir, "empty.jsonl");
+    fs.writeFileSync(p, "");
+    expect(await readTranscriptTokens(p)).toBeNull();
+  });
+
+  it("sums tokens across unique message IDs", async () => {
+    const transcript = makeTranscript([
+      {
+        type: "assistant",
+        message: {
+          id: "msg_1",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 50,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 200,
+          },
+        },
+      },
+      {
+        type: "user",
+        message: { role: "user", content: [] },
+      },
+      {
+        type: "assistant",
+        message: {
+          id: "msg_2",
+          usage: {
+            input_tokens: 5,
+            output_tokens: 30,
+            cache_read_input_tokens: 150,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      },
+    ]);
+    const p = path.join(tmpDir, "transcript.jsonl");
+    fs.writeFileSync(p, transcript);
+    const result = await readTranscriptTokens(p);
+    expect(result).not.toBeNull();
+    expect(result!.input_tokens).toBe(15);
+    expect(result!.output_tokens).toBe(80);
+    expect(result!.cache_read_tokens).toBe(250);
+    expect(result!.cache_creation_tokens).toBe(200);
+    expect(result!.total_tokens).toBe(15 + 80 + 250 + 200);
+  });
+
+  it("deduplicates by message ID — last occurrence wins", async () => {
+    const transcript = makeTranscript([
+      {
+        type: "assistant",
+        message: {
+          id: "msg_dup",
+          usage: {
+            input_tokens: 1,
+            output_tokens: 1,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      },
+      {
+        type: "assistant",
+        message: {
+          id: "msg_dup",
+          usage: {
+            input_tokens: 1,
+            output_tokens: 99,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      },
+    ]);
+    const p = path.join(tmpDir, "dup.jsonl");
+    fs.writeFileSync(p, transcript);
+    const result = await readTranscriptTokens(p);
+    expect(result!.output_tokens).toBe(99); // last occurrence wins
+    expect(result!.input_tokens).toBe(1);
+  });
+
+  it("skips non-assistant entries and malformed lines without throwing", async () => {
+    const p = path.join(tmpDir, "mixed.jsonl");
+    fs.writeFileSync(
+      p,
+      [
+        JSON.stringify({ type: "user", message: { role: "user" } }),
+        "not json {{{",
+        JSON.stringify({
+          type: "assistant",
+          message: {
+            id: "msg_1",
+            usage: {
+              input_tokens: 3,
+              output_tokens: 7,
+              cache_read_input_tokens: 0,
+              cache_creation_input_tokens: 0,
+            },
+          },
+        }),
+      ].join("\n") + "\n"
+    );
+    const result = await readTranscriptTokens(p);
+    expect(result!.input_tokens).toBe(3);
+    expect(result!.output_tokens).toBe(7);
+  });
+
+  it("returns null for assistant entries missing message.id", async () => {
+    const p = path.join(tmpDir, "no-id.jsonl");
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          usage: {
+            input_tokens: 5,
+            output_tokens: 10,
+            cache_read_input_tokens: 0,
+            cache_creation_input_tokens: 0,
+          },
+        },
+      }) + "\n"
+    );
+    expect(await readTranscriptTokens(p)).toBeNull();
+  });
+});
+
+describe("main SubagentStop transcript augmentation", () => {
+  let tmpDir: string;
+  let sink: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-subagent-"));
+    sink = path.join(tmpDir, "events.jsonl");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  it("augments subagent_stop with token fields from transcript", async () => {
+    const transcriptPath = path.join(tmpDir, "agent.jsonl");
+    fs.writeFileSync(
+      transcriptPath,
+      JSON.stringify({
+        type: "assistant",
+        message: {
+          id: "msg_1",
+          usage: {
+            input_tokens: 10,
+            output_tokens: 40,
+            cache_read_input_tokens: 100,
+            cache_creation_input_tokens: 50,
+          },
+        },
+      }) + "\n"
+    );
+    await main(
+      JSON.stringify({
+        session_id: "s-1",
+        hook_event_name: "SubagentStop",
+        agent_id: "agent-abc",
+        agent_type: "general-purpose",
+        agent_transcript_path: transcriptPath,
+        last_assistant_message: null,
+        stop_hook_active: false,
+      }),
+      sink
+    );
+    const evt = JSON.parse(fs.readFileSync(sink, "utf8").trim());
+    expect(evt.event_type).toBe("subagent_stop");
+    expect(evt.payload.input_tokens).toBe(10);
+    expect(evt.payload.output_tokens).toBe(40);
+    expect(evt.payload.cache_read_tokens).toBe(100);
+    expect(evt.payload.cache_creation_tokens).toBe(50);
+    expect(evt.payload.total_tokens).toBe(200);
+  });
+
+  it("writes subagent_stop without token fields when transcript is missing", async () => {
+    await main(
+      JSON.stringify({
+        session_id: "s-1",
+        hook_event_name: "SubagentStop",
+        agent_id: "agent-xyz",
+        agent_type: "general-purpose",
+        agent_transcript_path: "/nonexistent/path.jsonl",
+        last_assistant_message: null,
+        stop_hook_active: false,
+      }),
+      sink
+    );
+    const evt = JSON.parse(fs.readFileSync(sink, "utf8").trim());
+    expect(evt.event_type).toBe("subagent_stop");
+    expect(evt.payload.total_tokens).toBeUndefined();
+  });
+
+  it("writes subagent_stop without token fields when no transcript path", async () => {
+    await main(
+      JSON.stringify({
+        session_id: "s-1",
+        hook_event_name: "SubagentStop",
+        agent_id: "agent-xyz",
+        agent_type: "general-purpose",
+        last_assistant_message: null,
+        stop_hook_active: false,
+      }),
+      sink
+    );
+    const evt = JSON.parse(fs.readFileSync(sink, "utf8").trim());
+    expect(evt.event_type).toBe("subagent_stop");
+    expect(evt.payload.total_tokens).toBeUndefined();
   });
 });

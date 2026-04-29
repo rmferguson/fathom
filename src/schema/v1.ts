@@ -114,6 +114,13 @@ export interface SubagentPayload {
   agent_transcript_path?: string;
   last_assistant_message?: string;
   stop_hook_active?: boolean;
+  // Token fields parsed from transcript at SubagentStop time (absent on SubagentStart).
+  // Present for both foreground and background agents once the transcript is available.
+  total_tokens?: number;
+  input_tokens?: number;
+  output_tokens?: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
 }
 
 export interface GenericPayload {

@@ -26,6 +26,7 @@
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
+import * as readline from "readline";
 
 const SCHEMA_VERSION = "1.0.0";
 const DEFAULT_SINK = path.join(os.homedir(), ".fathom", "events.jsonl");
@@ -240,7 +241,81 @@ export function normalize(raw: Rec): Rec | null {
   return null;
 }
 
-export function main(input: string, sinkPath: string = SINK): void {
+interface TranscriptTokens {
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+}
+
+/**
+ * Read token usage from a subagent transcript JSONL file.
+ *
+ * The transcript records one entry per turn. Each "assistant" turn has a
+ * message.usage object. A single API message may appear twice (streaming
+ * intermediate + final), so we deduplicate by message.id and take the last
+ * occurrence (highest output_tokens). Cap at 16 MiB to avoid unbounded reads.
+ *
+ * Returns null if the file is missing, unreadable, or empty.
+ */
+export async function readTranscriptTokens(
+  transcriptPath: string
+): Promise<TranscriptTokens | null> {
+  try {
+    if (!fs.existsSync(transcriptPath)) return null;
+    const stat = fs.statSync(transcriptPath);
+    if (stat.size > 16 * 1024 * 1024) return null; // skip outlier-sized files
+    const rl = readline.createInterface({
+      input: fs.createReadStream(transcriptPath),
+      crlfDelay: Infinity,
+    });
+    const byId = new Map<
+      string,
+      { input: number; output: number; cacheRead: number; cacheCreate: number }
+    >();
+    for await (const line of rl) {
+      if (!line.trim()) continue;
+      try {
+        const obj = JSON.parse(line) as Rec;
+        if (obj.type !== "assistant") continue;
+        const msg = obj.message as Rec | undefined;
+        if (!msg?.usage || !msg?.id) continue;
+        const u = msg.usage as Rec;
+        byId.set(msg.id as string, {
+          input: (u.input_tokens as number) ?? 0,
+          output: (u.output_tokens as number) ?? 0,
+          cacheRead: (u.cache_read_input_tokens as number) ?? 0,
+          cacheCreate: (u.cache_creation_input_tokens as number) ?? 0,
+        });
+      } catch {
+        // skip malformed lines
+      }
+    }
+    if (byId.size === 0) return null;
+    let input = 0,
+      output = 0,
+      cacheRead = 0,
+      cacheCreate = 0;
+    for (const t of byId.values()) {
+      input += t.input;
+      output += t.output;
+      cacheRead += t.cacheRead;
+      cacheCreate += t.cacheCreate;
+    }
+    return {
+      total_tokens: input + output + cacheRead + cacheCreate,
+      input_tokens: input,
+      output_tokens: output,
+      cache_read_tokens: cacheRead,
+      cache_creation_tokens: cacheCreate,
+    };
+  } catch {
+    return null; // telemetry failure must never affect the session
+  }
+}
+
+export async function main(input: string, sinkPath: string = SINK): Promise<void> {
   let raw: Rec;
   try {
     raw = JSON.parse(input) as Rec;
@@ -251,6 +326,19 @@ export function main(input: string, sinkPath: string = SINK): void {
   const fathomEvent = normalize(raw);
   if (fathomEvent === null) {
     return;
+  }
+
+  // Augment subagent_stop events with token data from the transcript file.
+  // Background agents don't populate tokens in PostToolUse; the transcript is
+  // the only reliable source of per-subagent token usage.
+  if (fathomEvent.event_type === "subagent_stop") {
+    const transcriptPath = (fathomEvent.payload as Rec).agent_transcript_path as string | undefined;
+    if (transcriptPath) {
+      const tokens = await readTranscriptTokens(transcriptPath);
+      if (tokens !== null) {
+        Object.assign(fathomEvent.payload as Rec, tokens);
+      }
+    }
   }
 
   try {
@@ -296,8 +384,8 @@ export function readStdinBounded(
 
 if (typeof require !== "undefined" && require.main === module) {
   if (process.env.FATHOM_OFF) process.exit(0);
-  readStdinBounded(process.stdin).then((input) => {
-    if (input !== null) main(input);
+  readStdinBounded(process.stdin).then(async (input) => {
+    if (input !== null) await main(input);
     process.exit(0);
   });
 }

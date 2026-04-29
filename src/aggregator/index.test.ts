@@ -514,6 +514,127 @@ describe("aggregate", () => {
     ];
     expect(aggregate(events).sessions[0].cache_creation_tokens).toBe(500);
   });
+
+  it("counts background agent tokens from subagent_stop when tool_use had zero tokens", () => {
+    // Background agents: PostToolUse fires immediately with 0 tokens (tool_use event),
+    // then SubagentStop fires later with transcript-derived tokens.
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: {
+          tool_name: "Agent",
+          tool_use_id: "tu-bg",
+          success: true,
+          total_tokens: 0,
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          agent_id: "agent-bg",
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "agent-bg",
+          agent_type: "general-purpose",
+          total_tokens: 1200,
+          input_tokens: 100,
+          output_tokens: 200,
+          cache_read_tokens: 700,
+          cache_creation_tokens: 200,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].total_tokens).toBe(1200);
+    expect(r.sessions[0].input_tokens).toBe(100);
+    expect(r.sessions[0].output_tokens).toBe(200);
+    expect(r.sessions[0].cache_read_tokens).toBe(700);
+    expect(r.sessions[0].cache_creation_tokens).toBe(200);
+    expect(r.sessions[0].cost_usd).toBeGreaterThan(0);
+  });
+
+  it("does not double-count foreground agent tokens when subagent_stop also has tokens", () => {
+    // Foreground agents: PostToolUse provides real tokens, SubagentStop transcript
+    // also has tokens — only count once (from tool_use).
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: {
+          tool_name: "Agent",
+          tool_use_id: "tu-fg",
+          success: true,
+          total_tokens: 1000,
+          input_tokens: 800,
+          output_tokens: 200,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+          agent_id: "agent-fg",
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "agent-fg",
+          agent_type: "general-purpose",
+          total_tokens: 1000,
+          input_tokens: 800,
+          output_tokens: 200,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].total_tokens).toBe(1000); // not 2000
+    expect(r.sessions[0].input_tokens).toBe(800);
+    expect(r.sessions[0].output_tokens).toBe(200);
+  });
+
+  it("counts subagent_stop tokens for multiple background agents independently", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "a-1",
+          agent_type: "general-purpose",
+          total_tokens: 500,
+          input_tokens: 50,
+          output_tokens: 100,
+          cache_read_tokens: 250,
+          cache_creation_tokens: 100,
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "a-2",
+          agent_type: "general-purpose",
+          total_tokens: 300,
+          input_tokens: 30,
+          output_tokens: 60,
+          cache_read_tokens: 150,
+          cache_creation_tokens: 60,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].total_tokens).toBe(800);
+    expect(r.sessions[0].input_tokens).toBe(80);
+  });
+
+  it("ignores subagent_stop events with no token data (old events)", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: { agent_id: "a-1", agent_type: "general-purpose" },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].total_tokens).toBe(0);
+    expect(r.sessions[0].cost_usd).toBe(0);
+  });
 });
 
 describe("pruneEvents", () => {

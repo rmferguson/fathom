@@ -13,22 +13,25 @@ import {
 } from "./install";
 
 const HOOK_EVENTS = [
-  "PostToolUse", "PreToolUse", "PostToolUseFailure",
-  "SessionStart", "SessionEnd", "Stop", "Notification",
-  "SubagentStart", "SubagentStop", "PreCompact",
+  "PostToolUse",
+  "PreToolUse",
+  "PostToolUseFailure",
+  "SessionStart",
+  "SessionEnd",
+  "Stop",
+  "Notification",
+  "SubagentStart",
+  "SubagentStop",
+  "PreCompact",
 ];
 
 describe("getSettingsPath", () => {
   it("returns global settings path when local=false", () => {
-    expect(getSettingsPath(false)).toBe(
-      path.join(os.homedir(), ".claude", "settings.json")
-    );
+    expect(getSettingsPath(false)).toBe(path.join(os.homedir(), ".claude", "settings.json"));
   });
 
   it("returns project-local path when local=true", () => {
-    expect(getSettingsPath(true)).toBe(
-      path.join(process.cwd(), ".claude", "settings.local.json")
-    );
+    expect(getSettingsPath(true)).toBe(path.join(process.cwd(), ".claude", "settings.local.json"));
   });
 });
 
@@ -93,9 +96,7 @@ describe("installHooks", () => {
     const stale = "node /home/user/fathom/src/hooks/capture.js";
     const existing = {
       hooks: {
-        PostToolUse: [
-          { matcher: "", hooks: [{ type: "command", command: stale }] },
-        ],
+        PostToolUse: [{ matcher: "", hooks: [{ type: "command", command: stale }] }],
       },
     };
     const result = installHooks(existing);
@@ -204,14 +205,17 @@ describe("runInstall / runUninstall (filesystem)", () => {
   it("runInstall preserves existing non-fathom settings", () => {
     const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify({
-      model: "sonnet",
-      hooks: {
-        PostToolUse: [
-          { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
-        ],
-      },
-    }));
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        model: "sonnet",
+        hooks: {
+          PostToolUse: [
+            { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
+          ],
+        },
+      })
+    );
     runInstall(true);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
     expect(settings.model).toBe("sonnet");
@@ -245,13 +249,16 @@ describe("runInstall / runUninstall (filesystem)", () => {
   it("runUninstall preserves non-fathom hooks", () => {
     const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
-    fs.writeFileSync(settingsPath, JSON.stringify({
-      hooks: {
-        PostToolUse: [
-          { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
-        ],
-      },
-    }));
+    fs.writeFileSync(
+      settingsPath,
+      JSON.stringify({
+        hooks: {
+          PostToolUse: [
+            { matcher: "Bash", hooks: [{ type: "command", command: "node /other/hook.js" }] },
+          ],
+        },
+      })
+    );
     runInstall(true);
     runUninstall(true);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));

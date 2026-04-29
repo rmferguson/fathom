@@ -294,6 +294,10 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
   // (e.g. stops for agents dispatched before fathom was installed) can still
   // be attributed to the correct type bucket rather than creating a blank row.
   const agentTypeById = new Map<string, string>();
+  // Tracks agent_ids for which PostToolUse already supplied non-zero token data
+  // (foreground agents). When a subagent_stop arrives for the same agent_id we
+  // skip counting its transcript tokens to avoid double-counting.
+  const agentIdsWithToolUseTokens = new Set<string>();
 
   function ensureSession(event: FathomEvent): SessionSummary {
     let s = sessionsMap.get(event.session_id);
@@ -346,6 +350,11 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
       session.cache_creation_tokens += p.cache_creation_tokens ?? 0;
       if (p.tool_name === "Agent") {
         session.cost_usd += estimateCost(p, rates);
+        // Track agent_ids where PostToolUse supplied real tokens (foreground agents).
+        // subagent_stop processing will skip these to avoid double-counting.
+        if ((p.total_tokens ?? 0) > 0 && p.agent_id) {
+          agentIdsWithToolUseTokens.add(p.agent_id);
+        }
       }
       if (!p.success && recordError(event.session_id, p.tool_use_id)) {
         session.errors++;
@@ -391,6 +400,20 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         completions: 0,
       });
       bucket.completions++;
+
+      // Count tokens from transcript (background agents only). Foreground agent
+      // tokens arrive via PostToolUse (tool_use event) and are already counted;
+      // those agent_ids are in agentIdsWithToolUseTokens, so we skip them here.
+      const hasTranscriptTokens = (p.total_tokens ?? 0) > 0;
+      const alreadyCounted = p.agent_id ? agentIdsWithToolUseTokens.has(p.agent_id) : false;
+      if (hasTranscriptTokens && !alreadyCounted) {
+        session.total_tokens += p.total_tokens ?? 0;
+        session.input_tokens += p.input_tokens ?? 0;
+        session.output_tokens += p.output_tokens ?? 0;
+        session.cache_read_tokens += p.cache_read_tokens ?? 0;
+        session.cache_creation_tokens += p.cache_creation_tokens ?? 0;
+        session.cost_usd += estimateCost(p as unknown as ToolUsePayload, rates);
+      }
     }
 
     if (event.event_type === "session_end") {
