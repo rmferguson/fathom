@@ -216,13 +216,11 @@ export async function pruneEvents(
 /**
  * Coalesce duplicate session_end events for the same session_id.
  *
- * On a clean exit Claude Code fires both Stop and SessionEnd hooks, producing
- * two session_end records. The hook_source field identifies the origin. When
- * both are present, the Stop record takes precedence (it carries
- * last_assistant_message; SessionEnd may arrive without it).
- *
- * On an interrupted session only SessionEnd fires, so no coalescing is needed.
- * On older events without hook_source the first record seen is kept unchanged.
+ * Claude Code fires the Stop hook on every turn completion, not just at final
+ * exit — a long session accumulates many Stop records. It also fires SessionEnd
+ * once on clean exit. The last Stop record is the authoritative end-of-session
+ * marker (it carries the final last_assistant_message and the correct end
+ * timestamp). SessionEnd-only records are interrupted sessions.
  *
  * The returned array contains at most one session_end per session_id.
  */
@@ -238,16 +236,18 @@ function coalesceSessionEnds(events: FathomEvent[]): FathomEvent[] {
     }
   }
 
-  // For each session that has multiple session_end records, pick the winner.
+  // For each session, pick the winner: last Stop if any exist, otherwise last
+  // SessionEnd. Stop fires on every turn so the last one is the real session end.
   const winners = new Map<string, FathomEvent>();
   for (const [sessionId, ends] of sessionEnds) {
     if (ends.length === 1) {
       winners.set(sessionId, ends[0]);
       continue;
     }
-    // Prefer hook_source: "Stop" when both are present.
-    const stopRecord = ends.find((e) => (e.payload as SessionEndPayload).hook_source === "Stop");
-    winners.set(sessionId, stopRecord ?? ends[ends.length - 1]);
+    const stopRecords = ends.filter((e) => (e.payload as SessionEndPayload).hook_source === "Stop");
+    const winner =
+      stopRecords.length > 0 ? stopRecords[stopRecords.length - 1] : ends[ends.length - 1];
+    winners.set(sessionId, winner);
   }
 
   // Rebuild the event list: for session_end events, only emit the winner and
@@ -290,6 +290,10 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
   // both would double-count. Per session we keep at most one error per id.
   const erroredIdsBySession = new Map<string, Set<string>>();
   const seenSubagentDispatchIds = new Map<string, Set<string>>();
+  // Maps agent_id → agent_type so subagent_stop events with empty agent_type
+  // (e.g. stops for agents dispatched before fathom was installed) can still
+  // be attributed to the correct type bucket rather than creating a blank row.
+  const agentTypeById = new Map<string, string>();
 
   function ensureSession(event: FathomEvent): SessionSummary {
     let s = sessionsMap.get(event.session_id);
@@ -360,7 +364,8 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
 
     if (event.event_type === "subagent_start") {
       const p = event.payload as SubagentPayload;
-      const type = p.agent_type ?? "unknown";
+      const type = p.agent_type || "unknown";
+      if (p.agent_id) agentTypeById.set(p.agent_id, type);
       const bucket = (session.subagents[type] ??= {
         agent_type: type,
         dispatches: 0,
@@ -377,7 +382,9 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
 
     if (event.event_type === "subagent_stop") {
       const p = event.payload as SubagentPayload;
-      const type = p.agent_type ?? "unknown";
+      // Resolve type from the matching start event when the stop arrives without
+      // one — happens for agents dispatched before fathom was installed.
+      const type = p.agent_type || agentTypeById.get(p.agent_id ?? "") || "unknown";
       const bucket = (session.subagents[type] ??= {
         agent_type: type,
         dispatches: 0,

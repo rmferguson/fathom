@@ -204,6 +204,37 @@ describe("aggregate", () => {
     expect(r.sessions[0].wall_time_ms).toBe(5 * 60 * 1000);
   });
 
+  it("coalesces multiple Stop events — last one wins for duration and last_assistant_message", () => {
+    // Stop fires on every turn; only the last record reflects the real session end.
+    const events = [
+      makeEvent({
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/tmp", permission_mode: "default" },
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:02:00Z",
+        payload: { cwd: "/tmp", hook_source: "Stop", last_assistant_message: "turn 1" },
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:04:00Z",
+        payload: { cwd: "/tmp", hook_source: "Stop", last_assistant_message: "turn 2" },
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:06:00Z",
+        payload: { cwd: "/tmp", hook_source: "Stop", last_assistant_message: "turn 3" },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions).toHaveLength(1);
+    // Duration uses the last Stop timestamp (10:06), not the first (10:02).
+    expect(r.sessions[0].wall_time_ms).toBe(6 * 60 * 1000);
+    expect(r.sessions[0].ended_at).toBe("2026-04-21T10:06:00Z");
+  });
+
   it("sorts sessions newest-first", () => {
     const events = [
       makeEvent({
@@ -338,6 +369,43 @@ describe("aggregate", () => {
   it("subagent payload missing agent_type falls into 'unknown' bucket", () => {
     const events = [makeEvent({ event_type: "subagent_start", payload: { agent_id: "a-1" } })];
     expect(aggregate(events).sessions[0].subagents["unknown"].dispatches).toBe(1);
+  });
+
+  it("subagent_stop with empty agent_type resolves type from matching subagent_start", () => {
+    // SubagentStop can arrive with empty agent_type when the agent was dispatched
+    // before fathom was installed. Look up the type from the SubagentStart by agent_id.
+    const events = [
+      makeEvent({
+        event_type: "subagent_start",
+        payload: { agent_id: "a-1", agent_type: "general-purpose" },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: { agent_id: "a-1", agent_type: "" },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].subagents["general-purpose"]).toEqual({
+      agent_type: "general-purpose",
+      dispatches: 1,
+      completions: 1,
+    });
+    expect(r.sessions[0].subagents[""]).toBeUndefined();
+  });
+
+  it("orphaned subagent_stop with no matching start falls into 'unknown' bucket", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: { agent_id: "a-orphan", agent_type: "" },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].subagents["unknown"]).toEqual({
+      agent_type: "unknown",
+      dispatches: 0,
+      completions: 1,
+    });
   });
 
   it("computes cost_usd from Agent tool_use events", () => {
