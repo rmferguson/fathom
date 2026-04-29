@@ -30,6 +30,9 @@ export interface FathomEvent {
   session_id: string;
   project_dir: string; // absolute path — CLAUDE_PROJECT_DIR or cwd fallback
   payload: EventPayload;
+  /** Raw hook fields not mapped to a known payload field. Present when Claude Code
+   *  sends data fathom doesn't yet have a named field for — useful for discovery. */
+  extra?: Record<string, unknown>;
 }
 
 export type EventPayload =

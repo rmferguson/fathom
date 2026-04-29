@@ -58,6 +58,19 @@ function now(): string {
   return new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+// Fields present on every raw hook payload — never interesting as extras.
+const UNIVERSAL_KEYS = new Set(["hook_event_name", "session_id", "cwd"]);
+
+/** Returns a record of fields in `raw` not in `knownKeys` or the universal set.
+ *  Returns undefined when nothing is left, so the extra key is omitted entirely. */
+function pickExtra(raw: Rec, knownKeys: string[]): Rec | undefined {
+  const result: Rec = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!UNIVERSAL_KEYS.has(k) && !knownKeys.includes(k)) result[k] = v;
+  }
+  return Object.keys(result).length > 0 ? result : undefined;
+}
+
 export function normalize(raw: Rec): Rec | null {
   const eventName = (raw.hook_event_name as string) ?? "";
   const sessionId = (raw.session_id as string) ?? "";
@@ -68,13 +81,14 @@ export function normalize(raw: Rec): Rec | null {
     ""
   );
 
-  const event = (eventType: string, payload: Rec): Rec => ({
+  const event = (eventType: string, payload: Rec, extra?: Rec): Rec => ({
     schema_version: SCHEMA_VERSION,
     event_type: eventType,
     timestamp: ts,
     session_id: sessionId,
     project_dir: projectDir,
     payload,
+    ...(extra !== undefined ? { extra } : {}),
   });
 
   if (eventName === "PostToolUse") {
@@ -102,70 +116,99 @@ export function normalize(raw: Rec): Rec | null {
         agent_type: response.agentType,
       });
     }
-    return event("tool_use", payload);
+    return event(
+      "tool_use",
+      payload,
+      pickExtra(raw, ["tool_name", "tool_use_id", "tool_response"])
+    );
   }
 
   if (eventName === "PreToolUse") {
     const toolInput = (raw.tool_input as Rec) ?? {};
-    return event("tool_start", {
-      tool_name: raw.tool_name ?? "",
-      tool_use_id: raw.tool_use_id ?? "",
-      input_size_bytes: Buffer.byteLength(JSON.stringify(toolInput)),
-    });
+    return event(
+      "tool_start",
+      {
+        tool_name: raw.tool_name ?? "",
+        tool_use_id: raw.tool_use_id ?? "",
+        input_size_bytes: Buffer.byteLength(JSON.stringify(toolInput)),
+      },
+      pickExtra(raw, ["tool_name", "tool_use_id", "tool_input"])
+    );
   }
 
   if (eventName === "PostToolUseFailure") {
-    return event("tool_failure", {
-      tool_name: raw.tool_name ?? "",
-      tool_use_id: raw.tool_use_id ?? "",
-      error: raw.error ?? null,
-      is_interrupt: raw.is_interrupt ?? null,
-    });
+    return event(
+      "tool_failure",
+      {
+        tool_name: raw.tool_name ?? "",
+        tool_use_id: raw.tool_use_id ?? "",
+        error: raw.error ?? null,
+        is_interrupt: raw.is_interrupt ?? null,
+      },
+      pickExtra(raw, ["tool_name", "tool_use_id", "error", "is_interrupt"])
+    );
   }
 
   if (eventName === "SessionStart") {
-    return event("session_start", {
-      cwd: raw.cwd ?? "",
-      permission_mode: raw.permission_mode ?? "",
-    });
+    return event(
+      "session_start",
+      { cwd: raw.cwd ?? "", permission_mode: raw.permission_mode ?? "" },
+      pickExtra(raw, ["permission_mode"])
+    );
   }
 
   if (eventName === "Stop" || eventName === "SessionEnd") {
     // Both hooks fire on clean exit, producing two session_end records.
     // hook_source lets the aggregator coalesce: Stop wins when both are present.
-    return event("session_end", {
-      cwd: raw.cwd ?? "",
-      last_assistant_message: raw.last_assistant_message ?? null,
-      hook_source: eventName as "Stop" | "SessionEnd",
-    });
+    return event(
+      "session_end",
+      {
+        cwd: raw.cwd ?? "",
+        last_assistant_message: raw.last_assistant_message ?? null,
+        hook_source: eventName as "Stop" | "SessionEnd",
+      },
+      pickExtra(raw, ["last_assistant_message"])
+    );
   }
 
   if (eventName === "Notification") {
-    return event("notification", {
-      message: raw.message ?? "",
-      level: raw.level ?? null,
-    });
+    return event(
+      "notification",
+      { message: raw.message ?? "", level: raw.level ?? null },
+      pickExtra(raw, ["message", "level"])
+    );
   }
 
   if (eventName === "SubagentStart") {
-    return event("subagent_start", {
-      agent_id: raw.agent_id ?? "",
-      agent_type: raw.agent_type ?? "",
-    });
+    return event(
+      "subagent_start",
+      { agent_id: raw.agent_id ?? "", agent_type: raw.agent_type ?? "" },
+      pickExtra(raw, ["agent_id", "agent_type"])
+    );
   }
 
   if (eventName === "SubagentStop") {
-    return event("subagent_stop", {
-      agent_id: raw.agent_id ?? "",
-      agent_type: raw.agent_type ?? "",
-      agent_transcript_path: raw.agent_transcript_path ?? null,
-      last_assistant_message: raw.last_assistant_message ?? null,
-      stop_hook_active: raw.stop_hook_active ?? null,
-    });
+    return event(
+      "subagent_stop",
+      {
+        agent_id: raw.agent_id ?? "",
+        agent_type: raw.agent_type ?? "",
+        agent_transcript_path: raw.agent_transcript_path ?? null,
+        last_assistant_message: raw.last_assistant_message ?? null,
+        stop_hook_active: raw.stop_hook_active ?? null,
+      },
+      pickExtra(raw, [
+        "agent_id",
+        "agent_type",
+        "agent_transcript_path",
+        "last_assistant_message",
+        "stop_hook_active",
+      ])
+    );
   }
 
   if (eventName === "PreCompact") {
-    return event("pre_compact", {});
+    return event("pre_compact", {}, pickExtra(raw, []));
   }
 
   // Intentionally unhandled hook events.
