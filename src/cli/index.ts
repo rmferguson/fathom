@@ -71,6 +71,77 @@ export function resolveProject(
   throw new ProjectNotFoundError(`No project matching "${query}" found.`, knownDirs);
 }
 
+// ---------------------------------------------------------------------------
+// Gap 3: session detail command — resolveSession + error types
+// ---------------------------------------------------------------------------
+
+export class SessionNotFoundError extends Error {
+  constructor(
+    message: string,
+    readonly knownPrefixes: string[]
+  ) {
+    super(message);
+    this.name = "SessionNotFoundError";
+  }
+}
+
+export class SessionNotUniqueError extends Error {
+  constructor(
+    message: string,
+    readonly matches: string[]
+  ) {
+    super(message);
+    this.name = "SessionNotUniqueError";
+  }
+}
+
+/**
+ * Resolve a session_id prefix to a unique session's events.
+ *
+ * Mirrors resolveProject semantics: prefix must be >= 8 chars; an exact match
+ * or unique prefix match wins; ambiguous prefix throws SessionNotUniqueError;
+ * no match throws SessionNotFoundError.
+ */
+export function resolveSession(
+  allEvents: FathomEvent[],
+  idPrefix: string
+): { events: FathomEvent[]; sessionId: string } {
+  if (idPrefix.length < 8) {
+    throw new SessionNotFoundError(
+      `Session ID prefix must be at least 8 characters (got ${idPrefix.length}).`,
+      []
+    );
+  }
+
+  const knownIds = [...new Set(allEvents.map((e) => e.session_id).filter(Boolean))];
+
+  // Exact match first
+  if (knownIds.includes(idPrefix)) {
+    return {
+      events: allEvents.filter((e) => e.session_id === idPrefix),
+      sessionId: idPrefix,
+    };
+  }
+
+  // Prefix match
+  const matches = knownIds.filter((id) => id.startsWith(idPrefix));
+  if (matches.length === 1) {
+    return {
+      events: allEvents.filter((e) => e.session_id === matches[0]),
+      sessionId: matches[0],
+    };
+  }
+  if (matches.length > 1) {
+    throw new SessionNotUniqueError(
+      `Ambiguous session ID prefix "${idPrefix}" matches ${matches.length} sessions. Provide more characters.`,
+      matches.map((id) => id.slice(0, 8))
+    );
+  }
+
+  const known8 = knownIds.map((id) => id.slice(0, 8));
+  throw new SessionNotFoundError(`No session matching prefix "${idPrefix}" found.`, known8);
+}
+
 /**
  * Filter events to those whose timestamp falls inside [since, until].
  * Bounds are ISO 8601 strings; either may be undefined (open-ended).
@@ -168,6 +239,24 @@ function runAction(fn: (opts: Record<string, unknown>) => Promise<void> | void) 
         console.error(e.message);
         console.error(
           `Known projects:\n${e.knownDirs.map((d) => `  ${d}`).join("\n") || "  (none)"}`
+        );
+        process.exitCode = 1;
+        return;
+      }
+      if (e instanceof SessionNotFoundError) {
+        console.error(e.message);
+        if (e.knownPrefixes.length > 0) {
+          console.error(
+            `Known sessions (8-char prefix):\n${e.knownPrefixes.map((p) => `  ${p}`).join("\n")}`
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+      if (e instanceof SessionNotUniqueError) {
+        console.error(e.message);
+        console.error(
+          `Matching prefixes:\n${e.matches.map((m) => `  ${m}`).join("\n")}`
         );
         process.exitCode = 1;
         return;
@@ -387,6 +476,174 @@ program
       }
     })
   );
+
+program
+  .command("session <id>")
+  .description("Show full detail for a single session (id prefix ok, min 8 chars)")
+  .option("--all", "Search across all projects (default: current project only)")
+  .option("--timeline", "Include chronological event timeline")
+  .option("--json", "Emit machine-readable JSON")
+  .action(async (idArg: string, opts: Record<string, unknown>) => {
+    try {
+      const idPrefix = idArg;
+      // Load events — either all or current project only.
+      const loadOpts: LoadOpts = opts.all ? { all: true } : {};
+      const { events: scopedEvents } = await loadEvents(loadOpts);
+
+      const { events: sessionEvents, sessionId } = resolveSession(scopedEvents, idPrefix);
+
+      // Build session summary by aggregating only this session's events.
+      const { sessions } = aggregate(sessionEvents);
+      const s = sessions[0];
+
+      // Build error list: tool_failure events + tool_use{success:false} events.
+      // Import the payload types inline since they're already imported via aggregator.
+      type TUP = { tool_name: string; tool_use_id?: string; success?: boolean; error?: string };
+      type TFP = { tool_name: string; tool_use_id?: string; error?: string };
+      const errors: Array<{ timestamp: string; tool_name: string; error: string }> = [];
+      const erroredIds = new Set<string>();
+      for (const ev of sessionEvents) {
+        if (ev.event_type === "tool_use") {
+          const p = ev.payload as TUP;
+          if (!p.success) {
+            const key = p.tool_use_id ?? ev.timestamp;
+            if (!erroredIds.has(key)) {
+              erroredIds.add(key);
+              errors.push({
+                timestamp: ev.timestamp,
+                tool_name: p.tool_name,
+                error: p.error ?? "(failed)",
+              });
+            }
+          }
+        } else if (ev.event_type === "tool_failure") {
+          const p = ev.payload as TFP;
+          const key = p.tool_use_id ?? ev.timestamp;
+          if (!erroredIds.has(key)) {
+            erroredIds.add(key);
+            errors.push({
+              timestamp: ev.timestamp,
+              tool_name: p.tool_name,
+              error: p.error ?? "(failed)",
+            });
+          }
+        }
+      }
+
+      // Build timeline (when --timeline requested).
+      const TIMELINE_TYPES = new Set([
+        "tool_use",
+        "tool_failure",
+        "subagent_start",
+        "subagent_stop",
+        "notification",
+      ]);
+      const timeline = sessionEvents
+        .filter((ev) => TIMELINE_TYPES.has(ev.event_type))
+        .map((ev) => {
+          type GenP = Record<string, unknown>;
+          const p = ev.payload as GenP;
+          return {
+            timestamp: ev.timestamp,
+            event_type: ev.event_type,
+            tool_name: (p.tool_name as string | undefined) ?? undefined,
+            agent_type: (p.agent_type as string | undefined) ?? undefined,
+            duration_ms: (p.duration_ms as number | undefined) ?? undefined,
+          };
+        });
+
+      if (opts.json) {
+        const out = {
+          session: s,
+          errors,
+          ...(opts.timeline ? { timeline } : {}),
+        };
+        console.log(JSON.stringify(out, null, 2));
+        return;
+      }
+
+      // Text output
+      const duration = s?.wall_time_ms
+        ? `${(s.wall_time_ms / 60000).toFixed(1)}m`
+        : "unknown";
+
+      console.log(`\nSession: ${sessionId}`);
+      console.log(`Project: ${s?.project_dir ?? "(unknown)"}`);
+      console.log(`Started: ${s?.started_at ?? "-"}`);
+      console.log(`Ended:   ${s?.ended_at ?? "-"}`);
+      console.log(`Duration: ${duration}`);
+
+      console.log(`\nTokens`);
+      console.log(`  Total:        ${(s?.total_tokens ?? 0).toLocaleString()}`);
+      console.log(`  Input:        ${(s?.input_tokens ?? 0).toLocaleString()}`);
+      console.log(`  Output:       ${(s?.output_tokens ?? 0).toLocaleString()}`);
+      console.log(`  Cache read:   ${(s?.cache_read_tokens ?? 0).toLocaleString()}`);
+
+      const toolEntries = Object.entries(s?.tool_calls ?? {}).sort(([, a], [, b]) => b - a);
+      if (toolEntries.length > 0) {
+        console.log(`\nTool calls (${toolEntries.length} distinct)`);
+        for (const [tool, count] of toolEntries) {
+          console.log(`  ${tool.padEnd(22)} ${count}`);
+        }
+      }
+
+      const subEntries = Object.values(s?.subagents ?? {}).sort(
+        (a, b) => b.dispatches - a.dispatches
+      );
+      if (subEntries.length > 0) {
+        console.log(`\nSubagents`);
+        for (const sub of subEntries) {
+          const tokenStr =
+            sub.total_tokens > 0
+              ? `, ${sub.total_tokens.toLocaleString()} tokens, $${sub.cost_usd.toFixed(4)}`
+              : "";
+          console.log(
+            `  ${sub.agent_type.padEnd(22)} ${sub.dispatches} dispatched, ${sub.completions} completed${tokenStr}`
+          );
+        }
+      }
+
+      if (errors.length > 0) {
+        console.log(`\nErrors (${errors.length})`);
+        for (const e of errors) {
+          console.log(`  ${e.timestamp}  ${e.tool_name}  ${e.error}`);
+        }
+      }
+
+      if (s?.cost_usd && s.cost_usd > 0) {
+        console.log(`\nEstimated cost (Agent tool only): $${s.cost_usd.toFixed(4)}`);
+      }
+
+      if (opts.timeline && timeline.length > 0) {
+        console.log(`\nTimeline (${timeline.length} events)`);
+        for (const ev of timeline) {
+          const label =
+            ev.tool_name ?? ev.agent_type ?? ev.event_type;
+          const dur = ev.duration_ms !== undefined ? ` (${ev.duration_ms}ms)` : "";
+          console.log(`  ${ev.timestamp}  ${ev.event_type.padEnd(15)} ${label}${dur}`);
+        }
+      }
+    } catch (e) {
+      if (e instanceof SessionNotFoundError) {
+        console.error(e.message);
+        if (e.knownPrefixes.length > 0) {
+          console.error(
+            `Known sessions (8-char prefix):\n${e.knownPrefixes.map((p) => `  ${p}`).join("\n")}`
+          );
+        }
+        process.exitCode = 1;
+        return;
+      }
+      if (e instanceof SessionNotUniqueError) {
+        console.error(e.message);
+        console.error(`Matching prefixes:\n${e.matches.map((m) => `  ${m}`).join("\n")}`);
+        process.exitCode = 1;
+        return;
+      }
+      console.error((e as Error).message ?? String(e));
+      process.exitCode = 1;
+    }
+  });
 
 program
   .command("trend")

@@ -35,3 +35,11 @@ export {
   type AggregateSummary,
   type PruneResult,
 } from "./aggregator";
+
+// CLI helpers — error types and resolvers for programmatic use
+export {
+  ProjectNotFoundError,
+  SessionNotFoundError,
+  SessionNotUniqueError,
+  resolveSession,
+} from "./cli";

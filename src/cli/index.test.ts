@@ -3,7 +3,15 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { spawnSync } from "child_process";
-import { resolveProject, filterByTimeRange, parseCount, ProjectNotFoundError } from "./index";
+import {
+  resolveProject,
+  filterByTimeRange,
+  parseCount,
+  ProjectNotFoundError,
+  resolveSession,
+  SessionNotFoundError,
+  SessionNotUniqueError,
+} from "./index";
 import { FathomEvent } from "../schema/v1";
 
 const CLI_PATH = path.resolve(__dirname, "index.ts");
@@ -146,6 +154,53 @@ describe("parseCount", () => {
   it("falls back on a float", () => {
     expect(parseCount("3.5", 10)).toBe(10);
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gap 3: resolveSession unit tests
+// ---------------------------------------------------------------------------
+
+describe("resolveSession", () => {
+  const sessionA = "aaaaaaaa-0000-0000-0000-000000000000";
+  const sessionB = "bbbbbbbb-0000-0000-0000-000000000000";
+  const sessionC = "aaaaaaaa-1111-0000-0000-000000000000"; // same 8-char prefix as A
+
+  function ev(session_id: string, project_dir = "/p"): FathomEvent {
+    return {
+      schema_version: "1.0.0",
+      session_id,
+      project_dir,
+      timestamp: "2026-04-21T10:00:00Z",
+      event_type: "session_start",
+      payload: { cwd: project_dir, permission_mode: "default" },
+    } as FathomEvent;
+  }
+
+  const events = [ev(sessionA), ev(sessionB)];
+
+  it("resolves an exact full session_id", () => {
+    const r = resolveSession(events, sessionA);
+    expect(r.sessionId).toBe(sessionA);
+    expect(r.events).toHaveLength(1);
+  });
+
+  it("resolves a unique prefix (8+ chars)", () => {
+    const r = resolveSession(events, "aaaaaaaa");
+    expect(r.sessionId).toBe(sessionA);
+  });
+
+  it("throws SessionNotFoundError for no match", () => {
+    expect(() => resolveSession(events, "xxxxxxxx")).toThrow(SessionNotFoundError);
+  });
+
+  it("throws SessionNotUniqueError for ambiguous prefix", () => {
+    const withDuplicate = [ev(sessionA), ev(sessionC), ev(sessionB)];
+    expect(() => resolveSession(withDuplicate, "aaaaaaaa")).toThrow(SessionNotUniqueError);
+  });
+
+  it("throws SessionNotFoundError when prefix is shorter than 8 chars", () => {
+    expect(() => resolveSession(events, "aaaaaaa")).toThrow(SessionNotFoundError);
   });
 });
 
@@ -530,6 +585,193 @@ describe("fathom CLI (integration)", () => {
     expect(r.status).toBe(0);
     expect(r.stdout).toContain("/a/x");
     expect(r.stdout).toContain("/b/y");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Gap 3: fathom session <id> integration tests
+  // ---------------------------------------------------------------------------
+
+  it("session <id>: exact session_id shows session header and token section", () => {
+    const SESSION_ID = "aabbccdd-0000-0000-0000-000000000000";
+    fs.writeFileSync(
+      sink,
+      [
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:00:00Z",
+          event_type: "session_start",
+          payload: { cwd: PROJECT, permission_mode: "default" },
+        }),
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:01:00Z",
+          event_type: "tool_use",
+          payload: { tool_name: "Bash", tool_use_id: "tu-1", success: true, input_tokens: 500, output_tokens: 100 },
+        }),
+      ].join("\n") + "\n"
+    );
+    const r = runCli(["session", SESSION_ID], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(SESSION_ID);
+    expect(r.stdout).toContain("Tokens");
+    expect(r.stdout).toContain("Tool calls");
+  });
+
+  it("session <id>: 8-char prefix resolves to correct session", () => {
+    const SESSION_ID = "aabbccdd-0000-0000-0000-000000000000";
+    fs.writeFileSync(
+      sink,
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: SESSION_ID,
+        project_dir: PROJECT,
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: PROJECT, permission_mode: "default" },
+      }) + "\n"
+    );
+    const r = runCli(["session", "aabbccdd"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain(SESSION_ID);
+  });
+
+  it("session <id>: missing prefix exits non-zero with helpful stderr", () => {
+    fs.writeFileSync(
+      sink,
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "aabbccdd-0000-0000-0000-000000000000",
+        project_dir: PROJECT,
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: PROJECT, permission_mode: "default" },
+      }) + "\n"
+    );
+    const r = runCli(["session", "xxxxxxxx"], { sink, project: PROJECT });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("No session matching");
+  });
+
+  it("session <id>: ambiguous prefix exits non-zero", () => {
+    const SESSION_A = "aabbccdd-0000-0000-0000-000000000000";
+    const SESSION_B = "aabbccdd-1111-0000-0000-000000000000";
+    fs.writeFileSync(
+      sink,
+      [
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_A,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:00:00Z",
+          event_type: "session_start",
+          payload: { cwd: PROJECT, permission_mode: "default" },
+        }),
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_B,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T11:00:00Z",
+          event_type: "session_start",
+          payload: { cwd: PROJECT, permission_mode: "default" },
+        }),
+      ].join("\n") + "\n"
+    );
+    const r = runCli(["session", "aabbccdd"], { sink, project: PROJECT });
+    expect(r.status).not.toBe(0);
+    expect(r.stderr).toContain("Ambiguous");
+  });
+
+  it("session <id> --json: emits parseable JSON with session and errors fields", () => {
+    const SESSION_ID = "aabbccdd-0000-0000-0000-000000000000";
+    fs.writeFileSync(
+      sink,
+      [
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:00:00Z",
+          event_type: "session_start",
+          payload: { cwd: PROJECT, permission_mode: "default" },
+        }),
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:01:00Z",
+          event_type: "tool_use",
+          payload: { tool_name: "Bash", tool_use_id: "tu-1", success: false, error: "exit 1" },
+        }),
+      ].join("\n") + "\n"
+    );
+    const r = runCli(["session", SESSION_ID, "--json"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Record<string, unknown>;
+    expect(parsed).toHaveProperty("session");
+    expect(parsed).toHaveProperty("errors");
+    expect(Array.isArray(parsed.errors)).toBe(true);
+    const errs = parsed.errors as Array<Record<string, unknown>>;
+    expect(errs).toHaveLength(1);
+    expect(errs[0].tool_name).toBe("Bash");
+    expect(errs[0].error).toBe("exit 1");
+  });
+
+  it("session <id> --timeline: includes Timeline section in text output", () => {
+    const SESSION_ID = "aabbccdd-0000-0000-0000-000000000000";
+    fs.writeFileSync(
+      sink,
+      [
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:00:00Z",
+          event_type: "session_start",
+          payload: { cwd: PROJECT, permission_mode: "default" },
+        }),
+        JSON.stringify({
+          schema_version: "1.0.0",
+          session_id: SESSION_ID,
+          project_dir: PROJECT,
+          timestamp: "2026-04-21T10:01:00Z",
+          event_type: "tool_use",
+          payload: { tool_name: "Bash", tool_use_id: "tu-1", success: true },
+        }),
+      ].join("\n") + "\n"
+    );
+    const r = runCli(["session", SESSION_ID, "--timeline"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Timeline");
+    expect(r.stdout).toContain("tool_use");
+    expect(r.stdout).toContain("Bash");
+  });
+
+  it("session <id> --all: finds session from a different project", () => {
+    const SESSION_ID = "aabbccdd-0000-0000-0000-000000000000";
+    const OTHER_PROJECT = "/other/proj";
+    fs.writeFileSync(
+      sink,
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: SESSION_ID,
+        project_dir: OTHER_PROJECT,
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: OTHER_PROJECT, permission_mode: "default" },
+      }) + "\n"
+    );
+    // Without --all, the session won't be found in PROJECT scope.
+    const rNoAll = runCli(["session", SESSION_ID], { sink, project: PROJECT });
+    expect(rNoAll.status).not.toBe(0);
+
+    // With --all, the session is found across all projects.
+    const rAll = runCli(["session", SESSION_ID, "--all"], { sink, project: PROJECT });
+    expect(rAll.status).toBe(0);
+    expect(rAll.stdout).toContain(SESSION_ID);
   });
 });
 
