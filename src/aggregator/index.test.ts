@@ -343,11 +343,23 @@ describe("aggregate", () => {
       agent_type: "general-purpose",
       dispatches: 2,
       completions: 1,
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      cost_usd: 0,
     });
     expect(r.sessions[0].subagents["test-writer"]).toEqual({
       agent_type: "test-writer",
       dispatches: 1,
       completions: 1,
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      cost_usd: 0,
     });
     expect(r.subagent_totals["general-purpose"].dispatches).toBe(2);
   });
@@ -389,6 +401,12 @@ describe("aggregate", () => {
       agent_type: "general-purpose",
       dispatches: 1,
       completions: 1,
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      cost_usd: 0,
     });
     expect(r.sessions[0].subagents[""]).toBeUndefined();
   });
@@ -405,6 +423,12 @@ describe("aggregate", () => {
       agent_type: "unknown",
       dispatches: 0,
       completions: 1,
+      total_tokens: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_creation_tokens: 0,
+      cost_usd: 0,
     });
   });
 
@@ -634,6 +658,167 @@ describe("aggregate", () => {
     const r = aggregate(events);
     expect(r.sessions[0].total_tokens).toBe(0);
     expect(r.sessions[0].cost_usd).toBe(0);
+  });
+
+  // --- Gap 1: per-subagent token accumulation ---
+
+  it("accumulates token fields into SubagentSummary bucket for background agents (subagent_stop)", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "bg-1",
+          agent_type: "general-purpose",
+          total_tokens: 1200,
+          input_tokens: 100,
+          output_tokens: 200,
+          cache_read_tokens: 700,
+          cache_creation_tokens: 200,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    const bucket = r.sessions[0].subagents["general-purpose"];
+    expect(bucket.total_tokens).toBe(1200);
+    expect(bucket.input_tokens).toBe(100);
+    expect(bucket.output_tokens).toBe(200);
+    expect(bucket.cache_read_tokens).toBe(700);
+    expect(bucket.cache_creation_tokens).toBe(200);
+    expect(bucket.cost_usd).toBeGreaterThan(0);
+  });
+
+  it("accumulates token fields into SubagentSummary bucket for foreground agents (tool_use)", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: {
+          tool_name: "Agent",
+          tool_use_id: "fg-tu",
+          success: true,
+          agent_id: "fg-1",
+          agent_type: "general-purpose",
+          total_tokens: 1000,
+          input_tokens: 800,
+          output_tokens: 200,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    const bucket = r.sessions[0].subagents["general-purpose"];
+    expect(bucket.total_tokens).toBe(1000);
+    expect(bucket.input_tokens).toBe(800);
+    expect(bucket.output_tokens).toBe(200);
+    expect(bucket.cost_usd).toBeGreaterThan(0);
+  });
+
+  it("does not double-count tokens in subagent bucket for foreground agent (tool_use + subagent_stop)", () => {
+    // Foreground agent: tool_use has real tokens, subagent_stop also has tokens.
+    // Bucket should reflect only the tool_use tokens.
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: {
+          tool_name: "Agent",
+          tool_use_id: "fg-tu",
+          success: true,
+          agent_id: "fg-1",
+          agent_type: "general-purpose",
+          total_tokens: 1000,
+          input_tokens: 800,
+          output_tokens: 200,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "fg-1",
+          agent_type: "general-purpose",
+          total_tokens: 1000,
+          input_tokens: 800,
+          output_tokens: 200,
+          cache_read_tokens: 0,
+          cache_creation_tokens: 0,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    const bucket = r.sessions[0].subagents["general-purpose"];
+    // Only counted once from tool_use
+    expect(bucket.total_tokens).toBe(1000);
+  });
+
+  it("accumulates SubagentSummary tokens across multiple background agents of same type", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "bg-1",
+          agent_type: "general-purpose",
+          total_tokens: 500,
+          input_tokens: 50,
+          output_tokens: 100,
+          cache_read_tokens: 250,
+          cache_creation_tokens: 100,
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        payload: {
+          agent_id: "bg-2",
+          agent_type: "general-purpose",
+          total_tokens: 300,
+          input_tokens: 30,
+          output_tokens: 60,
+          cache_read_tokens: 150,
+          cache_creation_tokens: 60,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    const bucket = r.sessions[0].subagents["general-purpose"];
+    expect(bucket.total_tokens).toBe(800);
+    expect(bucket.input_tokens).toBe(80);
+    expect(bucket.cost_usd).toBeGreaterThan(0);
+  });
+
+  it("rolls SubagentSummary token fields into subagent_totals across sessions", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_stop",
+        session_id: "s-1",
+        payload: {
+          agent_id: "bg-s1",
+          agent_type: "general-purpose",
+          total_tokens: 400,
+          input_tokens: 40,
+          output_tokens: 80,
+          cache_read_tokens: 200,
+          cache_creation_tokens: 80,
+        },
+      }),
+      makeEvent({
+        event_type: "subagent_stop",
+        session_id: "s-2",
+        payload: {
+          agent_id: "bg-s2",
+          agent_type: "general-purpose",
+          total_tokens: 600,
+          input_tokens: 60,
+          output_tokens: 120,
+          cache_read_tokens: 300,
+          cache_creation_tokens: 120,
+        },
+      }),
+    ];
+    const r = aggregate(events);
+    const total = r.subagent_totals["general-purpose"];
+    expect(total.total_tokens).toBe(1000);
+    expect(total.input_tokens).toBe(100);
+    expect(total.cost_usd).toBeGreaterThan(0);
   });
 });
 

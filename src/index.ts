@@ -30,6 +30,7 @@ export {
   aggregate,
   pruneEvents,
   defaultSinkPath,
+  type SubagentSummary,
   type SessionSummary,
   type AggregateSummary,
   type PruneResult,

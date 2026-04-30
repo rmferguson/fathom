@@ -23,6 +23,12 @@ export interface SubagentSummary {
   agent_type: string;
   dispatches: number; // count of subagent_start events seen
   completions: number; // count of subagent_stop events seen
+  total_tokens: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_creation_tokens: number;
+  cost_usd: number;
 }
 
 export interface SessionSummary {
@@ -349,11 +355,33 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
       session.cache_read_tokens += p.cache_read_tokens ?? 0;
       session.cache_creation_tokens += p.cache_creation_tokens ?? 0;
       if (p.tool_name === "Agent") {
-        session.cost_usd += estimateCost(p, rates);
+        const agentCost = estimateCost(p, rates);
+        session.cost_usd += agentCost;
         // Track agent_ids where PostToolUse supplied real tokens (foreground agents).
         // subagent_stop processing will skip these to avoid double-counting.
         if ((p.total_tokens ?? 0) > 0 && p.agent_id) {
           agentIdsWithToolUseTokens.add(p.agent_id);
+          // Accumulate tokens into the per-subagent bucket for foreground agents.
+          // We use agent_type from the payload if present; otherwise "unknown".
+          // This field may be absent on older payloads — fall back to "unknown".
+          const agType = p.agent_type || "unknown";
+          const agBucket = (session.subagents[agType] ??= {
+            agent_type: agType,
+            dispatches: 0,
+            completions: 0,
+            total_tokens: 0,
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_creation_tokens: 0,
+            cost_usd: 0,
+          });
+          agBucket.total_tokens += p.total_tokens ?? 0;
+          agBucket.input_tokens += p.input_tokens ?? 0;
+          agBucket.output_tokens += p.output_tokens ?? 0;
+          agBucket.cache_read_tokens += p.cache_read_tokens ?? 0;
+          agBucket.cache_creation_tokens += p.cache_creation_tokens ?? 0;
+          agBucket.cost_usd += agentCost;
         }
       }
       if (!p.success && recordError(event.session_id, p.tool_use_id)) {
@@ -379,6 +407,12 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         agent_type: type,
         dispatches: 0,
         completions: 0,
+        total_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cost_usd: 0,
       });
       // Dedupe in case the same agent_id is captured twice.
       const seen = seenSubagentDispatchIds.get(event.session_id) ?? new Set<string>();
@@ -398,6 +432,12 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         agent_type: type,
         dispatches: 0,
         completions: 0,
+        total_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cost_usd: 0,
       });
       bucket.completions++;
 
@@ -412,7 +452,15 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         session.output_tokens += p.output_tokens ?? 0;
         session.cache_read_tokens += p.cache_read_tokens ?? 0;
         session.cache_creation_tokens += p.cache_creation_tokens ?? 0;
-        session.cost_usd += estimateCost(p as unknown as ToolUsePayload, rates);
+        const subCost = estimateCost(p as unknown as ToolUsePayload, rates);
+        session.cost_usd += subCost;
+        // Accumulate into the per-subagent bucket as well.
+        bucket.total_tokens += p.total_tokens ?? 0;
+        bucket.input_tokens += p.input_tokens ?? 0;
+        bucket.output_tokens += p.output_tokens ?? 0;
+        bucket.cache_read_tokens += p.cache_read_tokens ?? 0;
+        bucket.cache_creation_tokens += p.cache_creation_tokens ?? 0;
+        bucket.cost_usd += subCost;
       }
     }
 
@@ -451,9 +499,21 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         agent_type: type,
         dispatches: 0,
         completions: 0,
+        total_tokens: 0,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_creation_tokens: 0,
+        cost_usd: 0,
       });
       bucket.dispatches += sub.dispatches;
       bucket.completions += sub.completions;
+      bucket.total_tokens += sub.total_tokens;
+      bucket.input_tokens += sub.input_tokens;
+      bucket.output_tokens += sub.output_tokens;
+      bucket.cache_read_tokens += sub.cache_read_tokens;
+      bucket.cache_creation_tokens += sub.cache_creation_tokens;
+      bucket.cost_usd += sub.cost_usd;
     }
   }
 

@@ -239,8 +239,12 @@ program
       if (subagentEntries.length > 0) {
         console.log(`\nSubagents`);
         for (const sub of subagentEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+          const tokenStr =
+            sub.total_tokens > 0
+              ? `, tokens=${sub.total_tokens.toLocaleString()} cost=$${sub.cost_usd.toFixed(4)}`
+              : "";
           console.log(
-            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`
+            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed${tokenStr}`
           );
         }
       }
@@ -352,8 +356,20 @@ program
       if (subEntries.length > 0) {
         console.log(`\nSubagents (all-time)`);
         for (const sub of subEntries.sort((a, b) => b.dispatches - a.dispatches)) {
+          const tokenStr =
+            sub.total_tokens > 0
+              ? `, tokens=${sub.total_tokens.toLocaleString()} cost=$${sub.cost_usd.toFixed(4)}`
+              : "";
           console.log(
-            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed`
+            `  ${sub.agent_type.padEnd(20)} ${sub.dispatches} dispatched, ${sub.completions} completed${tokenStr}`
+          );
+        }
+        // Surface cross-agent subagent token cost as a fraction of total cost
+        const subTotalCost = subEntries.reduce((a, s) => a + s.cost_usd, 0);
+        if (subTotalCost > 0 && total_cost_usd > 0) {
+          const pct = ((subTotalCost / total_cost_usd) * 100).toFixed(1);
+          console.log(
+            `  Subagent token cost: $${subTotalCost.toFixed(4)} (${pct}% of total estimated cost)`
           );
         }
       }
