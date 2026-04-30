@@ -51,6 +51,7 @@ Top tools
 ```bash
 fathom summary      Last session: tool calls, duration, token counts (Agent tool only)
 fathom sessions     List recent sessions with tool and timing stats
+fathom session <id> Full detail for a single session (id prefix ok, min 8 chars)
 fathom trend        All-time tool call counts; token totals (Agent tool only)
 fathom projects     List all projects that have recorded events
 fathom export       Dump raw events as JSON or JSONL
@@ -66,6 +67,25 @@ All commands default to the current git repo. Use flags to change scope:
 ```bash
 fathom summary --project myrepo    # filter by project name or path
 fathom summary --all               # all projects
+```
+
+### Sessions
+
+```bash
+fathom sessions                        # list recent sessions (current project)
+fathom sessions --all                  # all projects (adds PROJECT column)
+fathom sessions --json                 # JSON array with session_id, tokens, cost
+fathom sessions --group-by-project     # one row per project with rolled-up totals
+fathom sessions --group-by-project --json
+```
+
+### Session detail
+
+```bash
+fathom session <id>             # full session detail by exact or 8-char prefix
+fathom session <id> --json      # machine-readable JSON (session, errors fields)
+fathom session <id> --timeline  # include chronological event timeline
+fathom session <id> --all       # search across all projects
 ```
 
 ### Export
