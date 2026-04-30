@@ -276,6 +276,156 @@ describe("fathom CLI (integration)", () => {
     expect(r.stderr).toContain("Invalid --count value");
   });
 
+  // --- Gap 2: cross-project sessions view ---
+
+  it("sessions --json: emits JSON array with session_id, project_dir, tokens, tools, cost", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: PROJECT, permission_mode: "default" },
+      },
+      {
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "1", success: true },
+      },
+      {
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:05:00Z",
+        payload: { cwd: PROJECT, hook_source: "Stop", last_assistant_message: "done" },
+      },
+    ]);
+    const r = runCli(["sessions", "--json"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Array<Record<string, unknown>>;
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toHaveLength(1);
+    const row = parsed[0];
+    expect(row).toHaveProperty("session_id");
+    expect(row).toHaveProperty("project_dir", PROJECT);
+    expect(row).toHaveProperty("started_at");
+    expect(row).toHaveProperty("ended_at");
+    expect(row).toHaveProperty("wall_time_ms");
+    expect(row).toHaveProperty("total_tokens");
+    expect(row).toHaveProperty("tool_calls_total", 1);
+    expect(row).toHaveProperty("cost_usd");
+  });
+
+  it("sessions --all: shows PROJECT column when spanning multiple projects", () => {
+    // Write events for two distinct project dirs
+    const lines = [
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-a",
+        project_dir: "/proj/alpha",
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/alpha", permission_mode: "default" },
+      }),
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-b",
+        project_dir: "/proj/beta",
+        timestamp: "2026-04-21T11:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/beta", permission_mode: "default" },
+      }),
+    ];
+    fs.writeFileSync(sink, lines.join("\n") + "\n");
+    const r = runCli(["sessions", "--all"], { sink });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("PROJECT");
+    expect(r.stdout).toContain("alpha");
+    expect(r.stdout).toContain("beta");
+  });
+
+  it("sessions: default single-project view does not show PROJECT column", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: PROJECT, permission_mode: "default" },
+      },
+    ]);
+    const r = runCli(["sessions"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    // The table header should NOT have the PROJECT column word in column-header position
+    // (it will still have SESSION, STARTED, TOKENS, TOOLS)
+    const header = r.stdout.split("\n").find((l) => l.includes("SESSION"));
+    expect(header).toBeDefined();
+    expect(header).not.toMatch(/PROJECT/);
+  });
+
+  it("sessions --group-by-project: emits one row per project_dir (text)", () => {
+    const lines = [
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-a1",
+        project_dir: "/proj/alpha",
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/alpha", permission_mode: "default" },
+      }),
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-a2",
+        project_dir: "/proj/alpha",
+        timestamp: "2026-04-21T11:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/alpha", permission_mode: "default" },
+      }),
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-b",
+        project_dir: "/proj/beta",
+        timestamp: "2026-04-21T12:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/beta", permission_mode: "default" },
+      }),
+    ];
+    fs.writeFileSync(sink, lines.join("\n") + "\n");
+    const r = runCli(["sessions", "--all", "--group-by-project"], { sink });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("PROJECT");
+    expect(r.stdout).toContain("alpha");
+    expect(r.stdout).toContain("beta");
+  });
+
+  it("sessions --group-by-project --json: emits JSON array with project rollups", () => {
+    const lines = [
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-a",
+        project_dir: "/proj/alpha",
+        timestamp: "2026-04-21T10:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/alpha", permission_mode: "default" },
+      }),
+      JSON.stringify({
+        schema_version: "1.0.0",
+        session_id: "sess-b",
+        project_dir: "/proj/beta",
+        timestamp: "2026-04-21T11:00:00Z",
+        event_type: "session_start",
+        payload: { cwd: "/proj/beta", permission_mode: "default" },
+      }),
+    ];
+    fs.writeFileSync(sink, lines.join("\n") + "\n");
+    const r = runCli(["sessions", "--all", "--group-by-project", "--json"], { sink });
+    expect(r.status).toBe(0);
+    const parsed = JSON.parse(r.stdout) as Array<Record<string, unknown>>;
+    expect(Array.isArray(parsed)).toBe(true);
+    expect(parsed).toHaveLength(2);
+    const row = parsed[0];
+    expect(row).toHaveProperty("project_dir");
+    expect(row).toHaveProperty("project_basename");
+    expect(row).toHaveProperty("sessions");
+    expect(row).toHaveProperty("total_tokens");
+    expect(row).toHaveProperty("tool_calls_total");
+    expect(row).toHaveProperty("cost_usd");
+  });
+
   it("trend --json: includes total_cost_usd and subagent_totals", () => {
     writeEvents([
       { event_type: "subagent_start", payload: { agent_id: "a-1", agent_type: "general-purpose" } },

@@ -262,35 +262,128 @@ program
   .option("--project <name>", "Filter by project name or path")
   .option("--since <iso>", "Only include events at or after this ISO timestamp")
   .option("--until <iso>", "Only include events at or before this ISO timestamp")
+  .option("--json", "Emit machine-readable JSON instead of formatted text")
+  .option(
+    "--group-by-project",
+    "Emit one row per project with rolled-up totals instead of per-session rows"
+  )
   .action(
     runAction(async (opts) => {
       const { events, projectLabel } = await loadEvents(opts as LoadOpts);
+
+      // --group-by-project: roll up totals across all sessions per project dir.
+      if (opts.groupByProject) {
+        const { sessions } = aggregate(events);
+        const byProject = new Map<
+          string,
+          { sessions: number; total_tokens: number; tool_calls_total: number; cost_usd: number }
+        >();
+        for (const s of sessions) {
+          const dir = s.project_dir || "";
+          const row = byProject.get(dir) ?? {
+            sessions: 0,
+            total_tokens: 0,
+            tool_calls_total: 0,
+            cost_usd: 0,
+          };
+          row.sessions++;
+          row.total_tokens += s.total_tokens;
+          row.tool_calls_total += Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
+          row.cost_usd += s.cost_usd;
+          byProject.set(dir, row);
+        }
+        const rows = [...byProject.entries()].map(([dir, totals]) => ({
+          project_dir: dir,
+          project_basename: path.basename(dir),
+          ...totals,
+        }));
+        if (opts.json) {
+          console.log(JSON.stringify(rows, null, 2));
+          return;
+        }
+        console.log(
+          `\n${"PROJECT".padEnd(20)} ${"SESSIONS".padStart(8)} ${"TOKENS".padStart(12)} ${"TOOLS".padStart(8)} ${"COST".padStart(10)}`
+        );
+        console.log("─".repeat(62));
+        for (const r of rows) {
+          const costStr = r.cost_usd > 0 ? `$${r.cost_usd.toFixed(2)}` : "-";
+          console.log(
+            `${r.project_basename.padEnd(20)} ${String(r.sessions).padStart(8)} ${r.total_tokens.toLocaleString().padStart(12)} ${String(r.tool_calls_total).padStart(8)} ${costStr.padStart(10)}`
+          );
+        }
+        return;
+      }
+
       if (events.length === 0) {
-        console.log("No events recorded yet. Run: fathom install");
+        if (opts.json) console.log(JSON.stringify([]));
+        else console.log("No events recorded yet. Run: fathom install");
         return;
       }
       const { sessions } = aggregate(events);
       const n = parseCount(opts.count as string | undefined, 10);
 
-      if (projectLabel) console.log(`\nProject: ${projectLabel}`);
-      console.log(
-        `\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
-      );
-      console.log("─".repeat(58));
+      // Determine whether to show a PROJECT column: show it when the scope spans
+      // multiple projects (--all with no single project filter, or --project matching multiple).
+      const multiProject = !projectLabel;
 
-      const shown = sessions.slice(0, n);
-      for (const s of shown) {
-        const id = s.session_id.slice(0, 8) + "...";
-        const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
-        console.log(
-          `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
-        );
+      if (opts.json) {
+        const rows = sessions.slice(0, n).map((s) => ({
+          session_id: s.session_id,
+          project_dir: s.project_dir,
+          started_at: s.started_at,
+          ended_at: s.ended_at,
+          wall_time_ms: s.wall_time_ms,
+          total_tokens: s.total_tokens,
+          tool_calls_total: Object.values(s.tool_calls).reduce((a, b) => a + b, 0),
+          cost_usd: s.cost_usd,
+        }));
+        console.log(JSON.stringify(rows, null, 2));
+        return;
       }
-      if (sessions.length > shown.length) {
-        const hidden = sessions.length - shown.length;
+
+      if (projectLabel) console.log(`\nProject: ${projectLabel}`);
+
+      if (multiProject) {
+        // Wide table with PROJECT column
         console.log(
-          `\n... ${hidden} more session${hidden === 1 ? "" : "s"} not shown (total ${sessions.length}). Use -n ${sessions.length} or --count ${sessions.length} to see all.`
+          `\n${"SESSION".padEnd(12)} ${"PROJECT".padEnd(16)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
         );
+        console.log("─".repeat(74));
+        const shown = sessions.slice(0, n);
+        for (const s of shown) {
+          const id = s.session_id.slice(0, 8) + "...";
+          const proj = path.basename(s.project_dir || "").slice(0, 15).padEnd(16);
+          const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
+          console.log(
+            `${id.padEnd(12)} ${proj} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+          );
+        }
+        if (sessions.length > shown.length) {
+          const hidden = sessions.length - shown.length;
+          console.log(
+            `\n... ${hidden} more session${hidden === 1 ? "" : "s"} not shown (total ${sessions.length}). Use -n ${sessions.length} or --count ${sessions.length} to see all.`
+          );
+        }
+      } else {
+        // Narrow table (single-project scope — byte-identical to prior behavior)
+        console.log(
+          `\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
+        );
+        console.log("─".repeat(58));
+        const shown = sessions.slice(0, n);
+        for (const s of shown) {
+          const id = s.session_id.slice(0, 8) + "...";
+          const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
+          console.log(
+            `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+          );
+        }
+        if (sessions.length > shown.length) {
+          const hidden = sessions.length - shown.length;
+          console.log(
+            `\n... ${hidden} more session${hidden === 1 ? "" : "s"} not shown (total ${sessions.length}). Use -n ${sessions.length} or --count ${sessions.length} to see all.`
+          );
+        }
       }
     })
   );
