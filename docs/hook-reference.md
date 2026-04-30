@@ -113,7 +113,7 @@ No token data, no prior turn context, no model information. Only the raw prompt 
 | `Write` | `file_path`, `content` |
 | `Edit` | `file_path`, `old_string`, `new_string`, `replace_all` |
 | `Read` | `file_path`, `offset`, `limit` |
-| `Agent` | `prompt`, `description`, `subagent_type`, `model` |
+| `Agent` | `prompt`, `description`, `subagent_type`, `model`, `run_in_background`, `mode` |
 
 ### PostToolUse — Additional Fields
 
@@ -146,6 +146,15 @@ No token data, no prior turn context, no model information. Only the raw prompt 
   }
 }
 ```
+
+**Agent `status` values — empirically observed:**
+
+| `status` | Meaning | Token data present? |
+|---|---|---|
+| `"completed"` | Synchronous agent finished successfully | Yes — full `usage` block |
+| `"async_launched"` | Background agent dispatched (`run_in_background: true`) — hook fires immediately at launch, not on completion | No |
+
+For background agents, `PostToolUse` fires at dispatch with `status: "async_launched"` and no token data. The agent's completion and final token spend are reported via `SubagentStop`. Do not treat `async_launched` as a failure — it is a distinct lifecycle state. The authoritative status for background agent outcomes is the matching `SubagentStop` event. (VERIFIED 2026-04-30, dogfooding ai-firm data)
 
 **Bash tool** (VERIFIED 2026-04-21):
 ```json

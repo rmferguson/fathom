@@ -98,7 +98,7 @@ export function normalize(raw: Rec): Rec | null {
     const usage = (response.usage as Rec) ?? {};
     const success =
       toolName === "Agent"
-        ? response.status === "completed"
+        ? response.status === "completed" || response.status === "async_launched"
         : !((response.interrupted as boolean) ?? false);
     const payload: Rec = {
       tool_name: toolName,
@@ -108,6 +108,7 @@ export function normalize(raw: Rec): Rec | null {
     };
     if (toolName === "Agent") {
       Object.assign(payload, {
+        agent_status: response.status,
         total_tokens: response.totalTokens,
         input_tokens: usage.input_tokens,
         output_tokens: usage.output_tokens,

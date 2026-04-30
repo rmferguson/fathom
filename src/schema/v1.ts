@@ -51,6 +51,7 @@ export interface ToolUsePayload {
   duration_ms?: number;
   success: boolean;
   // Agent tool specific — token data is directly available
+  agent_status?: string;
   total_tokens?: number;
   input_tokens?: number;
   output_tokens?: number;

@@ -155,6 +155,7 @@ describe("normalize", () => {
         })
       );
       expect(result?.payload.success).toBe(true);
+      expect(result?.payload.agent_status).toBe("completed");
       expect(result?.payload.total_tokens).toBe(1000);
       expect(result?.payload.input_tokens).toBe(800);
       expect(result?.payload.output_tokens).toBe(150);
@@ -163,7 +164,7 @@ describe("normalize", () => {
       expect(result?.payload.agent_type).toBe("general-purpose");
     });
 
-    it("Agent: failure when status!=completed", () => {
+    it("Agent: failure when status=error", () => {
       const result = normalize(
         raw({
           hook_event_name: "PostToolUse",
@@ -173,6 +174,20 @@ describe("normalize", () => {
         })
       );
       expect(result?.payload.success).toBe(false);
+      expect(result?.payload.agent_status).toBe("error");
+    });
+
+    it("Agent: success when status=async_launched", () => {
+      const result = normalize(
+        raw({
+          hook_event_name: "PostToolUse",
+          tool_name: "Agent",
+          tool_use_id: "tu-5",
+          tool_response: { status: "async_launched", agentId: "agent-bg", usage: {} },
+        })
+      );
+      expect(result?.payload.success).toBe(true);
+      expect(result?.payload.agent_status).toBe("async_launched");
     });
   });
 
