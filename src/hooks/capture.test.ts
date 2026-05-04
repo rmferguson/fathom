@@ -3,6 +3,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Readable } from "stream";
+import { spawnSync } from "child_process";
 import { normalize, main, readStdinBounded, readTranscriptTokens } from "./capture";
 
 const SESSION_ID = "test-session-001";
@@ -685,5 +686,82 @@ describe("main SubagentStop transcript augmentation", () => {
     const evt = JSON.parse(fs.readFileSync(sink, "utf8").trim());
     expect(evt.event_type).toBe("subagent_stop");
     expect(evt.payload.total_tokens).toBeUndefined();
+  });
+});
+
+describe("FATHOM_OFF kill switch (subprocess)", () => {
+  let tmpDir: string;
+  let sink: string;
+  // node_modules lives in the main repo root, not the worktree. Walk up until
+  // we find a node_modules directory — works in both main repo and worktrees.
+  function findTsxBin(): string {
+    let dir = __dirname;
+    for (let i = 0; i < 8; i++) {
+      const candidate = path.join(dir, "node_modules", ".bin", "tsx");
+      if (fs.existsSync(candidate)) return candidate;
+      dir = path.dirname(dir);
+    }
+    throw new Error("tsx binary not found — run npm install in the repo root");
+  }
+  const tsxBin = findTsxBin();
+  const CAPTURE_PATH = path.resolve(__dirname, "capture.ts");
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-fathomoff-test-"));
+    sink = path.join(tmpDir, "events.jsonl");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it("exits 0 without writing anything when FATHOM_OFF is set", () => {
+    // Provide a valid hook event payload on stdin so capture would normally write.
+    const hookInput = JSON.stringify({
+      session_id: "s-fathomoff",
+      hook_event_name: "SessionStart",
+      cwd: "/tmp/test-project",
+      permission_mode: "default",
+    });
+
+    const result = spawnSync(tsxBin, [CAPTURE_PATH], {
+      input: hookInput,
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        FATHOM_OFF: "1",
+        FATHOM_SINK: sink,
+      },
+    });
+
+    // Must exit cleanly.
+    expect(result.status).toBe(0);
+    // Must not create the sink file — no events written.
+    expect(fs.existsSync(sink)).toBe(false);
+  });
+
+  it("writes to sink normally when FATHOM_OFF is unset", () => {
+    const hookInput = JSON.stringify({
+      session_id: "s-normal",
+      hook_event_name: "SessionStart",
+      cwd: "/tmp/test-project",
+      permission_mode: "default",
+    });
+
+    const env = { ...process.env, FATHOM_SINK: sink };
+    delete env.FATHOM_OFF;
+
+    const result = spawnSync(tsxBin, [CAPTURE_PATH], {
+      input: hookInput,
+      encoding: "utf8",
+      env,
+    });
+
+    expect(result.status).toBe(0);
+    expect(fs.existsSync(sink)).toBe(true);
+    const line = fs.readFileSync(sink, "utf8").trim();
+    expect(line).toBeTruthy();
+    const evt = JSON.parse(line);
+    expect(evt.event_type).toBe("session_start");
   });
 });
