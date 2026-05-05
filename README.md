@@ -98,7 +98,7 @@ fathom export --all --format json > events.json
 
 ### Pruning
 
-The sink file grows indefinitely. At heavy usage (~8 sessions/day) expect roughly 160 MB/year. Prune old events with:
+The sink file grows indefinitely. Growth depends on session intensity (tool calls per session vary widely). At moderate usage (~8 sessions/day) expect roughly 100–250 MB/year; sprint-heavy days with many subagents push the high end. Prune old events with:
 
 ```bash
 fathom prune --keep-days 90        # drop everything older than 90 days
