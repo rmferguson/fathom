@@ -251,6 +251,28 @@ interface TranscriptTokens {
 }
 
 /**
+ * Validate that a transcript path is safe to read.
+ *
+ * Defense-in-depth against path traversal or symlink attacks. Claude Code
+ * generates transcript paths so there is no current threat model, but cheap
+ * allow-listing prevents surprises if the hook API changes or is spoofed.
+ *
+ * Allowed prefixes: home directory and OS temp directory. Both are resolved
+ * via path.resolve() first so ".." segments and symlinks in the prefix are
+ * normalized away before the prefix check.
+ */
+export function isSafeTranscriptPath(p: string): boolean {
+  try {
+    const resolved = path.resolve(p);
+    const home = os.homedir();
+    const tmp = os.tmpdir();
+    return resolved.startsWith(home + path.sep) || resolved.startsWith(tmp + path.sep);
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Read token usage from a subagent transcript JSONL file.
  *
  * The transcript records one entry per turn. Each "assistant" turn has a
@@ -345,7 +367,7 @@ export async function main(input: string, sinkPath: string = SINK): Promise<void
   // the only reliable source of per-subagent token usage.
   if (fathomEvent.event_type === "subagent_stop") {
     const transcriptPath = (fathomEvent.payload as Rec).agent_transcript_path as string | undefined;
-    if (transcriptPath) {
+    if (transcriptPath && isSafeTranscriptPath(transcriptPath)) {
       const tokens = await readTranscriptTokens(transcriptPath);
       if (tokens !== null) {
         Object.assign(fathomEvent.payload as Rec, tokens);

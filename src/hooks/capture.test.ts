@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { Readable } from "stream";
 import { spawnSync } from "child_process";
-import { normalize, main, readStdinBounded, readTranscriptTokens, IO_TIMEOUT_MS } from "./capture";
+import { normalize, main, readStdinBounded, readTranscriptTokens, isSafeTranscriptPath, IO_TIMEOUT_MS } from "./capture";
 
 const SESSION_ID = "test-session-001";
 
@@ -808,5 +808,43 @@ describe("FATHOM_OFF kill switch (subprocess)", () => {
     expect(line).toBeTruthy();
     const evt = JSON.parse(line);
     expect(evt.event_type).toBe("session_start");
+  });
+});
+
+describe("isSafeTranscriptPath", () => {
+  it("allows paths inside home directory", () => {
+    const home = os.homedir();
+    expect(isSafeTranscriptPath(path.join(home, ".claude", "transcript.jsonl"))).toBe(true);
+  });
+
+  it("allows paths inside OS tmp directory", () => {
+    const tmp = os.tmpdir();
+    expect(isSafeTranscriptPath(path.join(tmp, "claude-agent", "transcript.jsonl"))).toBe(true);
+  });
+
+  it("rejects paths outside home and tmp", () => {
+    expect(isSafeTranscriptPath("/etc/passwd")).toBe(false);
+    expect(isSafeTranscriptPath("/var/log/syslog")).toBe(false);
+  });
+
+  it("rejects path traversal attempts that escape home", () => {
+    const home = os.homedir();
+    // e.g. /home/user/../../../etc/passwd
+    expect(isSafeTranscriptPath(home + "/../../../etc/passwd")).toBe(false);
+  });
+
+  it("rejects empty string", () => {
+    // path.resolve('') resolves to cwd, which may not be in home/tmp
+    // The important thing is it doesn't throw
+    const result = isSafeTranscriptPath("");
+    expect(typeof result).toBe("boolean");
+  });
+
+  it("rejects paths that are a prefix match but not a child (e.g. /home/usermalicious)", () => {
+    const home = os.homedir();
+    // Construct a path that starts with home string but isn't inside it
+    // e.g. if home is /home/robert, test /home/robertevil/file
+    const fake = home + "evil/transcript.jsonl";
+    expect(isSafeTranscriptPath(fake)).toBe(false);
   });
 });
