@@ -968,3 +968,143 @@ describe("fathom prune (CLI)", () => {
     expect(r.stdout).toMatch(/Removed 1 event/);
   });
 });
+
+describe("fathom install / uninstall (CLI integration)", () => {
+  let tmpDir: string;
+  let fakeHome: string;
+  let tsxBin: string;
+  // Find the repo root that actually has node_modules — that is the main
+  // (non-worktree) repo root. Worktrees share node_modules with the main repo.
+  function findNodeModulesRoot(): string {
+    let dir = __dirname;
+    for (let i = 0; i < 10; i++) {
+      if (fs.existsSync(path.join(dir, "node_modules", ".bin", "tsx"))) return dir;
+      dir = path.dirname(dir);
+    }
+    throw new Error("Could not find repo root with node_modules — run npm install");
+  }
+  const REPO_ROOT = findNodeModulesRoot();
+  const CLI_PATH_LOCAL = path.join(REPO_ROOT, "src", "cli", "index.ts");
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-install-cli-test-"));
+    fakeHome = path.join(tmpDir, "home");
+    fs.mkdirSync(path.join(fakeHome, ".claude"), { recursive: true });
+    // tsx lives in the main repo's node_modules; walk up to find it.
+    let dir = __dirname;
+    tsxBin = "";
+    for (let i = 0; i < 8; i++) {
+      const candidate = path.join(dir, "node_modules", ".bin", "tsx");
+      if (fs.existsSync(candidate)) {
+        tsxBin = candidate;
+        break;
+      }
+      dir = path.dirname(dir);
+    }
+    if (!tsxBin) throw new Error("tsx not found — run npm install");
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  // Run the install/uninstall CLI. For global installs (no --local), always
+  // use REPO_ROOT as cwd so install.ts computes CAPTURE_SCRIPT relative to the
+  // correct repo root rather than a worktree directory. For local installs,
+  // pass the target project dir as cwd so process.cwd() resolves correctly.
+  function runInstallCli(args: string[], cwdOverride?: string) {
+    const cwd = cwdOverride ?? REPO_ROOT;
+    return spawnSync(tsxBin, [CLI_PATH_LOCAL, ...args], {
+      encoding: "utf8",
+      cwd,
+      env: {
+        ...process.env,
+        HOME: fakeHome,
+        FATHOM_SINK: path.join(tmpDir, "events.jsonl"),
+        PATH: process.env.PATH,
+      },
+    });
+  }
+
+  it("install: exits 0 and prints confirmation", () => {
+    const r = runInstallCli(["install"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/Fathom hooks installed/);
+    expect(r.stdout).toMatch(/settings\.json/);
+  });
+
+  it("install: writes hooks to ~/.claude/settings.json", () => {
+    runInstallCli(["install"]);
+    const settingsPath = path.join(fakeHome, ".claude", "settings.json");
+    expect(fs.existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings).toHaveProperty("hooks");
+    // All 10 hook events must be registered.
+    const hookEvents = Object.keys(settings.hooks);
+    expect(hookEvents).toContain("PostToolUse");
+    expect(hookEvents).toContain("SessionStart");
+    expect(hookEvents).toContain("SubagentStop");
+    expect(hookEvents).toContain("PreCompact");
+    expect(hookEvents).toHaveLength(10);
+  });
+
+  it("install --local: writes hooks to .claude/settings.local.json in cwd", () => {
+    const localCwd = path.join(tmpDir, "project");
+    fs.mkdirSync(path.join(localCwd, ".claude"), { recursive: true });
+    // Pass localCwd so process.cwd() in getSettingsPath() resolves to the project dir.
+    const r = runInstallCli(["install", "--local"], localCwd);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/settings\.local\.json/);
+    const settingsPath = path.join(localCwd, ".claude", "settings.local.json");
+    expect(fs.existsSync(settingsPath)).toBe(true);
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings).toHaveProperty("hooks");
+  });
+
+  it("install is idempotent — running twice produces one entry per event", () => {
+    runInstallCli(["install"]);
+    runInstallCli(["install"]);
+    const settingsPath = path.join(fakeHome, ".claude", "settings.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    // Each event key should have exactly one entry (not duplicated).
+    for (const hookEntries of Object.values(settings.hooks) as unknown[][]) {
+      expect(hookEntries).toHaveLength(1);
+    }
+  });
+
+  it("uninstall: exits 0 and prints confirmation when hooks exist", () => {
+    runInstallCli(["install"]);
+    const r = runInstallCli(["uninstall"]);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/Removed \d+ fathom hook/);
+  });
+
+  it("uninstall: removes hooks from settings file", () => {
+    runInstallCli(["install"]);
+    runInstallCli(["uninstall"]);
+    const settingsPath = path.join(fakeHome, ".claude", "settings.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    // After uninstall the hooks key should be absent (no remaining entries).
+    expect(settings).not.toHaveProperty("hooks");
+  });
+
+  it("uninstall: reports nothing to remove when no hooks installed", () => {
+    const r = runInstallCli(["uninstall"]);
+    expect(r.status).toBe(0);
+    // Either "No settings file found" or "No fathom hooks found"
+    expect(r.stdout).toMatch(/No (settings file|fathom hooks)/);
+  });
+
+  it("uninstall --local: removes hooks from .claude/settings.local.json in cwd", () => {
+    const localCwd = path.join(tmpDir, "project");
+    fs.mkdirSync(path.join(localCwd, ".claude"), { recursive: true });
+    runInstallCli(["install", "--local"], localCwd);
+    // Pass localCwd so uninstall resolves settings.local.json in the same dir.
+    const r = runInstallCli(["uninstall", "--local"], localCwd);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toMatch(/Removed \d+ fathom hook/);
+    const settingsPath = path.join(localCwd, ".claude", "settings.local.json");
+    const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+    expect(settings).not.toHaveProperty("hooks");
+  });
+});
