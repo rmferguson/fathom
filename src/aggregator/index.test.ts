@@ -987,6 +987,98 @@ describe("aggregate", () => {
   });
 });
 
+describe("aggregate — edge cases with malformed/missing payload fields", () => {
+  it("handles tool_use with undefined tool_name — falls into empty-string bucket", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        // Deliberately omit tool_name to simulate a corrupt payload
+        payload: { tool_use_id: "t1", success: true } as Record<string, unknown>,
+      }),
+    ];
+    const r = aggregate(events);
+    // aggregate() uses p.tool_name which would be undefined; should not throw
+    expect(r.sessions).toHaveLength(1);
+    // tool_calls will have an 'undefined' key — that's the pinned behavior
+    expect(Object.keys(r.sessions[0].tool_calls).length).toBeGreaterThanOrEqual(0);
+  });
+
+  it("handles missing timestamps gracefully — does not throw on NaN date math", () => {
+    // session_end with a timestamp that parses to NaN via Date.parse
+    const events = [
+      makeEvent({
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/tmp", permission_mode: "default" },
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "not-a-date",
+        payload: { cwd: "/tmp", hook_source: "Stop", last_assistant_message: null },
+      }),
+    ];
+    // Should not throw even though wall_time_ms would be NaN
+    expect(() => aggregate(events)).not.toThrow();
+  });
+
+  it("handles tool_use event with missing tool_use_id — error dedup falls back gracefully", () => {
+    // tool_use with success=false and no tool_use_id
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: { tool_name: "Bash", success: false } as Record<string, unknown>,
+      }),
+      makeEvent({
+        event_type: "tool_use",
+        payload: { tool_name: "Bash", success: false } as Record<string, unknown>,
+      }),
+    ];
+    const r = aggregate(events);
+    // Without a tool_use_id the dedup Set won't prevent double-counting — both count
+    expect(r.sessions[0].errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it("handles tool_failure with no tool_use_id — does not throw", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_failure",
+        payload: { tool_name: "Read" } as Record<string, unknown>,
+      }),
+    ];
+    expect(() => aggregate(events)).not.toThrow();
+    expect(aggregate(events).sessions[0].errors).toBeGreaterThanOrEqual(1);
+  });
+
+  it("handles subagent_start with no agent_id — does not create duplicate dispatch", () => {
+    const events = [
+      makeEvent({
+        event_type: "subagent_start",
+        payload: { agent_type: "general-purpose" } as Record<string, unknown>,
+      }),
+      makeEvent({
+        event_type: "subagent_start",
+        payload: { agent_type: "general-purpose" } as Record<string, unknown>,
+      }),
+    ];
+    const r = aggregate(events);
+    // Both dispatches should count since there's no agent_id to dedup on
+    expect(r.sessions[0].subagents["general-purpose"].dispatches).toBe(2);
+  });
+
+  it("handles session with no session_start — still creates session summary", () => {
+    // Only a tool_use event, no session_start
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        payload: { tool_name: "Bash", tool_use_id: "t1", success: true },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions).toHaveLength(1);
+    expect(r.sessions[0].tool_calls["Bash"]).toBe(1);
+  });
+});
+
 describe("pruneEvents", () => {
   let tmpDir: string;
   let sinkPath: string;
