@@ -104,7 +104,7 @@ export function normalize(raw: Rec): Rec | null {
       tool_name: toolName,
       tool_use_id: raw.tool_use_id ?? "",
       success,
-      duration_ms: response.totalDurationMs ?? null,
+      duration_ms: response.totalDurationMs,
     };
     if (toolName === "Agent") {
       Object.assign(payload, {
@@ -144,8 +144,8 @@ export function normalize(raw: Rec): Rec | null {
       {
         tool_name: raw.tool_name ?? "",
         tool_use_id: raw.tool_use_id ?? "",
-        error: raw.error ?? null,
-        is_interrupt: raw.is_interrupt ?? null,
+        error: raw.error as string | undefined,
+        is_interrupt: raw.is_interrupt as boolean | undefined,
       },
       pickExtra(raw, ["tool_name", "tool_use_id", "error", "is_interrupt"])
     );
@@ -166,7 +166,7 @@ export function normalize(raw: Rec): Rec | null {
       "session_end",
       {
         cwd: raw.cwd ?? "",
-        last_assistant_message: raw.last_assistant_message ?? null,
+        last_assistant_message: raw.last_assistant_message as string | undefined,
         hook_source: eventName as "Stop" | "SessionEnd",
       },
       pickExtra(raw, ["last_assistant_message"])
@@ -176,7 +176,7 @@ export function normalize(raw: Rec): Rec | null {
   if (eventName === "Notification") {
     return event(
       "notification",
-      { message: raw.message ?? "", level: raw.level ?? null },
+      { message: raw.message ?? "", level: raw.level as string | undefined },
       pickExtra(raw, ["message", "level"])
     );
   }
@@ -195,9 +195,9 @@ export function normalize(raw: Rec): Rec | null {
       {
         agent_id: raw.agent_id ?? "",
         agent_type: raw.agent_type ?? "",
-        agent_transcript_path: raw.agent_transcript_path ?? null,
-        last_assistant_message: raw.last_assistant_message ?? null,
-        stop_hook_active: raw.stop_hook_active ?? null,
+        agent_transcript_path: raw.agent_transcript_path as string | undefined,
+        last_assistant_message: raw.last_assistant_message as string | undefined,
+        stop_hook_active: raw.stop_hook_active as boolean | undefined,
       },
       pickExtra(raw, [
         "agent_id",

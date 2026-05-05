@@ -266,9 +266,9 @@ describe("normalize", () => {
     expect(result?.payload.level).toBe("warning");
   });
 
-  it("Notification: level is null when absent in raw payload", () => {
+  it("Notification: level is absent when not in raw payload", () => {
     const result = normalize(raw({ hook_event_name: "Notification", message: "info" }));
-    expect(result?.payload.level).toBeNull();
+    expect(result?.payload.level).toBeUndefined();
   });
 
   it("PostToolUse non-Agent: omits agent-only token fields", () => {
