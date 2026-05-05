@@ -157,6 +157,12 @@ What this means in practice:
 - New `event_type` values may appear within a major version. Use a default branch in your switch statements rather than asserting the union is exhaustive.
 - The `hook_source` field on `session_end` events is the contract between fathom's capture and aggregation layers; consumers using `aggregate()` shouldn't need to look at it directly.
 
+### Deprecated fields
+
+| Field | Since | Status | Notes |
+|-------|-------|--------|-------|
+| `SessionEndPayload.wall_time_ms` | 1.0.0 | **Deprecated — always `undefined`** | Claude Code's Stop and SessionEnd hooks do not populate a wall-time field. The field is retained as `?: number` for forward compatibility in case a future hook version supplies it. Do not read `wall_time_ms` from events. Derive session duration from `Date.parse(session_end.timestamp) - Date.parse(session_start.timestamp)` instead — that is what `aggregate()` does internally. |
+
 ## Cost estimation
 
 `fathom summary` and `fathom trend` print an estimated USD cost for Agent-tool usage when token data is present.
