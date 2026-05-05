@@ -4,6 +4,7 @@ import * as path from "path";
 import * as readline from "readline";
 import {
   FathomEvent,
+  SCHEMA_VERSION,
   ToolUsePayload,
   ToolFailurePayload,
   SessionEndPayload,
@@ -124,10 +125,53 @@ export function filterByProject(events: FathomEvent[], projectDir: string): Fath
   return events.filter((e) => e.project_dir === normalized);
 }
 
-export async function readEvents(sinkPath: string = defaultSinkPath()): Promise<FathomEvent[]> {
-  if (!fs.existsSync(sinkPath)) return [];
+/**
+ * Result from readEventsWithStats — includes the accepted events plus counts
+ * of records that were rejected for various reasons. Callers can surface the
+ * quarantine_count to help users detect schema drift.
+ */
+export interface ReadEventsResult {
+  events: FathomEvent[];
+  /** Lines that could not be parsed as JSON. */
+  malformed_count: number;
+  /**
+   * Valid JSON lines that were rejected because their schema_version major
+   * version does not match SCHEMA_VERSION. These events are structurally
+   * incompatible and could produce wrong metrics if aggregated.
+   */
+  quarantine_count: number;
+}
+
+/**
+ * Parse the major version component from a semver string (e.g. "1.0.0" → 1).
+ * Returns NaN for strings that don't start with an integer segment.
+ */
+function majorVersion(semver: string): number {
+  return parseInt(semver.split(".")[0], 10);
+}
+
+const EXPECTED_MAJOR = majorVersion(SCHEMA_VERSION);
+
+/**
+ * Read and parse events from the sink file, returning events together with
+ * diagnostic counts (malformed lines, quarantined off-version records).
+ *
+ * Events whose schema_version major component does not match the current
+ * SCHEMA_VERSION are quarantined (excluded from the returned events array and
+ * counted in quarantine_count). This prevents 0.x events or hypothetical 2.x
+ * events from being silently cast to the current type and producing wrong metrics.
+ */
+export async function readEventsWithStats(
+  sinkPath: string = defaultSinkPath()
+): Promise<ReadEventsResult> {
+  if (!fs.existsSync(sinkPath)) {
+    return { events: [], malformed_count: 0, quarantine_count: 0 };
+  }
 
   const events: FathomEvent[] = [];
+  let malformed_count = 0;
+  let quarantine_count = 0;
+
   const rl = readline.createInterface({
     input: fs.createReadStream(sinkPath),
     crlfDelay: Infinity,
@@ -136,13 +180,42 @@ export async function readEvents(sinkPath: string = defaultSinkPath()): Promise<
   for await (const line of rl) {
     const trimmed = line.trim();
     if (!trimmed) continue;
+    let parsed: unknown;
     try {
-      events.push(JSON.parse(trimmed) as FathomEvent);
+      parsed = JSON.parse(trimmed);
     } catch {
-      // quarantine malformed records — don't drop silently in future, log to quarantine file
+      malformed_count++;
+      continue;
     }
+
+    // Validate schema_version major match before accepting the record.
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      typeof (parsed as Record<string, unknown>).schema_version !== "string"
+    ) {
+      malformed_count++;
+      continue;
+    }
+
+    const recordMajor = majorVersion((parsed as Record<string, unknown>).schema_version as string);
+    if (Number.isNaN(recordMajor) || recordMajor !== EXPECTED_MAJOR) {
+      quarantine_count++;
+      continue;
+    }
+
+    events.push(parsed as FathomEvent);
   }
 
+  return { events, malformed_count, quarantine_count };
+}
+
+/**
+ * Convenience wrapper that returns only accepted events. Use readEventsWithStats
+ * when you need quarantine diagnostics (e.g. CLI commands that surface drift warnings).
+ */
+export async function readEvents(sinkPath: string = defaultSinkPath()): Promise<FathomEvent[]> {
+  const { events } = await readEventsWithStats(sinkPath);
   return events;
 }
 

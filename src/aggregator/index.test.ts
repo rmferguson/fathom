@@ -4,6 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import {
   readEvents,
+  readEventsWithStats,
   aggregate,
   filterByProject,
   estimateCost,
@@ -61,6 +62,104 @@ describe("readEvents", () => {
     fs.writeFileSync(p, "{ bad json }\n" + JSON.stringify(event) + "\n");
     const result = await readEvents(p);
     expect(result).toHaveLength(1);
+  });
+});
+
+describe("readEventsWithStats", () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-test-"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  it("returns zero counts for empty file", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    fs.writeFileSync(p, "");
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(0);
+    expect(result.malformed_count).toBe(0);
+    expect(result.quarantine_count).toBe(0);
+  });
+
+  it("accepts events with matching major version", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    const event = makeEvent({
+      event_type: "session_start",
+      schema_version: "1.0.0",
+      payload: { cwd: "/tmp", permission_mode: "default" },
+    });
+    fs.writeFileSync(p, JSON.stringify(event) + "\n");
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(1);
+    expect(result.quarantine_count).toBe(0);
+    expect(result.malformed_count).toBe(0);
+  });
+
+  it("quarantines events with mismatched major version (0.x)", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    const oldEvent = makeEvent({
+      event_type: "session_start",
+      schema_version: "0.9.0",
+      payload: { cwd: "/tmp", permission_mode: "default" },
+    });
+    const currentEvent = makeEvent({
+      event_type: "session_start",
+      schema_version: "1.0.0",
+      payload: { cwd: "/tmp", permission_mode: "default" },
+    });
+    fs.writeFileSync(p, JSON.stringify(oldEvent) + "\n" + JSON.stringify(currentEvent) + "\n");
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(1);
+    expect(result.quarantine_count).toBe(1);
+    expect(result.malformed_count).toBe(0);
+    expect(result.events[0].schema_version).toBe("1.0.0");
+  });
+
+  it("quarantines events with mismatched major version (2.x future)", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    const futureEvent = makeEvent({
+      event_type: "session_start",
+      schema_version: "2.0.0",
+      payload: { cwd: "/tmp", permission_mode: "default" },
+    });
+    fs.writeFileSync(p, JSON.stringify(futureEvent) + "\n");
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(0);
+    expect(result.quarantine_count).toBe(1);
+  });
+
+  it("counts malformed JSON lines separately from quarantine", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    const event = makeEvent({
+      event_type: "session_start",
+      schema_version: "1.0.0",
+      payload: { cwd: "/tmp", permission_mode: "default" },
+    });
+    fs.writeFileSync(
+      p,
+      "{ bad json }\n" + // malformed
+        JSON.stringify({ schema_version: "0.9.0", event_type: "session_start" }) +
+        "\n" + // quarantined
+        JSON.stringify(event) +
+        "\n" // accepted
+    );
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(1);
+    expect(result.malformed_count).toBe(1);
+    expect(result.quarantine_count).toBe(1);
+  });
+
+  it("counts object without schema_version as malformed", async () => {
+    const p = path.join(tmpDir, "events.jsonl");
+    fs.writeFileSync(p, JSON.stringify({ event_type: "session_start" }) + "\n");
+    const result = await readEventsWithStats(p);
+    expect(result.events).toHaveLength(0);
+    expect(result.malformed_count).toBe(1);
+    expect(result.quarantine_count).toBe(0);
   });
 });
 
