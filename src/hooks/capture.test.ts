@@ -4,7 +4,7 @@ import * as os from "os";
 import * as path from "path";
 import { Readable } from "stream";
 import { spawnSync } from "child_process";
-import { normalize, main, readStdinBounded, readTranscriptTokens } from "./capture";
+import { normalize, main, readStdinBounded, readTranscriptTokens, IO_TIMEOUT_MS } from "./capture";
 
 const SESSION_ID = "test-session-001";
 
@@ -413,6 +413,19 @@ describe("readStdinBounded", () => {
     const result = await readStdinBounded(stream, 1024);
     expect(result).toBeNull();
   });
+
+  it("returns null when the stream never ends (timeout path)", async () => {
+    // A stream that emits data but never emits 'end' — simulates a hang.
+    const stream = new Readable({ read() {} });
+    stream.push("some data");
+    // Use a very short timeout (10ms) so the test doesn't actually wait 2s.
+    const result = await readStdinBounded(stream, 1024, 10);
+    expect(result).toBeNull();
+  });
+
+  it("IO_TIMEOUT_MS is a positive number", () => {
+    expect(IO_TIMEOUT_MS).toBeGreaterThan(0);
+  });
 });
 
 describe("extra field capture", () => {
@@ -614,6 +627,23 @@ describe("readTranscriptTokens", () => {
       }) + "\n"
     );
     expect(await readTranscriptTokens(p)).toBeNull();
+  });
+
+  it("accepts a timeoutMs override (interface contract)", async () => {
+    // Verify the function accepts a timeoutMs parameter and still returns
+    // correctly for a normal file when the timeout is generous.
+    const p = path.join(tmpDir, "normal.jsonl");
+    fs.writeFileSync(
+      p,
+      JSON.stringify({
+        type: "assistant",
+        message: { id: "m1", usage: { input_tokens: 10, output_tokens: 5 } },
+      }) + "\n"
+    );
+    // With a generous timeout (5s) the read should succeed normally.
+    const result = await readTranscriptTokens(p, 5000);
+    expect(result).not.toBeNull();
+    expect(result?.input_tokens).toBe(10);
   });
 });
 

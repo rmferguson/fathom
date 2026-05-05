@@ -261,59 +261,70 @@ interface TranscriptTokens {
  * Returns null if the file is missing, unreadable, or empty.
  */
 export async function readTranscriptTokens(
-  transcriptPath: string
+  transcriptPath: string,
+  timeoutMs: number = IO_TIMEOUT_MS
 ): Promise<TranscriptTokens | null> {
-  try {
-    if (!fs.existsSync(transcriptPath)) return null;
-    const stat = fs.statSync(transcriptPath);
-    if (stat.size > 16 * 1024 * 1024) return null; // skip outlier-sized files
-    const rl = readline.createInterface({
-      input: fs.createReadStream(transcriptPath),
-      crlfDelay: Infinity,
-    });
-    const byId = new Map<
-      string,
-      { input: number; output: number; cacheRead: number; cacheCreate: number }
-    >();
-    for await (const line of rl) {
-      if (!line.trim()) continue;
-      try {
-        const obj = JSON.parse(line) as Rec;
-        if (obj.type !== "assistant") continue;
-        const msg = obj.message as Rec | undefined;
-        if (!msg?.usage || !msg?.id) continue;
-        const u = msg.usage as Rec;
-        byId.set(msg.id as string, {
-          input: (u.input_tokens as number) ?? 0,
-          output: (u.output_tokens as number) ?? 0,
-          cacheRead: (u.cache_read_input_tokens as number) ?? 0,
-          cacheCreate: (u.cache_creation_input_tokens as number) ?? 0,
-        });
-      } catch {
-        // skip malformed lines
+  // Wrap the entire read in a timeout so a symlink to /dev/zero or an
+  // unbounded stream cannot hang capture indefinitely.
+  const timeoutPromise: Promise<null> = new Promise((resolve) => {
+    setTimeout(() => resolve(null), timeoutMs);
+  });
+
+  const readPromise = (async (): Promise<TranscriptTokens | null> => {
+    try {
+      if (!fs.existsSync(transcriptPath)) return null;
+      const stat = fs.statSync(transcriptPath);
+      if (stat.size > 16 * 1024 * 1024) return null; // skip outlier-sized files
+      const rl = readline.createInterface({
+        input: fs.createReadStream(transcriptPath),
+        crlfDelay: Infinity,
+      });
+      const byId = new Map<
+        string,
+        { input: number; output: number; cacheRead: number; cacheCreate: number }
+      >();
+      for await (const line of rl) {
+        if (!line.trim()) continue;
+        try {
+          const obj = JSON.parse(line) as Rec;
+          if (obj.type !== "assistant") continue;
+          const msg = obj.message as Rec | undefined;
+          if (!msg?.usage || !msg?.id) continue;
+          const u = msg.usage as Rec;
+          byId.set(msg.id as string, {
+            input: (u.input_tokens as number) ?? 0,
+            output: (u.output_tokens as number) ?? 0,
+            cacheRead: (u.cache_read_input_tokens as number) ?? 0,
+            cacheCreate: (u.cache_creation_input_tokens as number) ?? 0,
+          });
+        } catch {
+          // skip malformed lines
+        }
       }
+      if (byId.size === 0) return null;
+      let input = 0,
+        output = 0,
+        cacheRead = 0,
+        cacheCreate = 0;
+      for (const t of byId.values()) {
+        input += t.input;
+        output += t.output;
+        cacheRead += t.cacheRead;
+        cacheCreate += t.cacheCreate;
+      }
+      return {
+        total_tokens: input + output + cacheRead + cacheCreate,
+        input_tokens: input,
+        output_tokens: output,
+        cache_read_tokens: cacheRead,
+        cache_creation_tokens: cacheCreate,
+      };
+    } catch {
+      return null; // telemetry failure must never affect the session
     }
-    if (byId.size === 0) return null;
-    let input = 0,
-      output = 0,
-      cacheRead = 0,
-      cacheCreate = 0;
-    for (const t of byId.values()) {
-      input += t.input;
-      output += t.output;
-      cacheRead += t.cacheRead;
-      cacheCreate += t.cacheCreate;
-    }
-    return {
-      total_tokens: input + output + cacheRead + cacheCreate,
-      input_tokens: input,
-      output_tokens: output,
-      cache_read_tokens: cacheRead,
-      cache_creation_tokens: cacheCreate,
-    };
-  } catch {
-    return null; // telemetry failure must never affect the session
-  }
+  })();
+
+  return Promise.race([readPromise, timeoutPromise]);
 }
 
 export async function main(input: string, sinkPath: string = SINK): Promise<void> {
@@ -351,35 +362,53 @@ export async function main(input: string, sinkPath: string = SINK): Promise<void
 }
 
 /**
- * Read stdin into a buffer with a hard cap. Returns null if the cap is
- * exceeded — caller should treat this as a no-op (drop the event silently).
- * Exposed for testing.
+ * Hard timeout (ms) applied to both stdin reads and transcript reads.
+ * Capture must never block Claude Code, so all I/O resolves within this window.
+ */
+export const IO_TIMEOUT_MS = 2000;
+
+/**
+ * Read stdin into a buffer with a hard cap and a hard time limit.
+ *
+ * Returns null when:
+ * - The byte cap (maxBytes) is exceeded.
+ * - The time limit (timeoutMs) elapses before the stream ends.
+ * - The stream emits an error.
+ *
+ * A null return means the caller should treat the event as a no-op (drop
+ * silently). Exposed for testing.
  */
 export function readStdinBounded(
   stream: NodeJS.ReadableStream,
-  maxBytes: number = MAX_STDIN_BYTES
+  maxBytes: number = MAX_STDIN_BYTES,
+  timeoutMs: number = IO_TIMEOUT_MS
 ): Promise<string | null> {
   return new Promise((resolve) => {
     let input = "";
     let bytes = 0;
-    let aborted = false;
+    let settled = false;
+
+    function settle(value: string | null) {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(value);
+    }
+
+    const timer = setTimeout(() => settle(null), timeoutMs);
+
     stream.setEncoding("utf8");
     stream.on("data", (chunk: string) => {
-      if (aborted) return;
+      if (settled) return;
       bytes += Buffer.byteLength(chunk);
       if (bytes > maxBytes) {
-        aborted = true;
-        resolve(null);
+        settle(null);
         return;
       }
       input += chunk;
     });
-    stream.on("end", () => {
-      if (!aborted) resolve(input);
-    });
-    stream.on("error", () => {
-      if (!aborted) resolve(null);
-    });
+    stream.on("end", () => settle(input));
+    stream.on("error", () => settle(null));
   });
 }
 
