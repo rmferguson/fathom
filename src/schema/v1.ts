@@ -99,8 +99,12 @@ export interface SessionEndPayload {
    * The aggregator coalesces them: when both are present for the same session_id,
    * the Stop record wins (it carries last_assistant_message; SessionEnd may not).
    * On an interrupted session only SessionEnd fires, so no coalescing is needed.
+   *
+   * Absent on events written by fathom versions prior to the coalescing fix —
+   * the aggregator treats absent hook_source the same as "Stop" for backward
+   * compatibility.
    */
-  hook_source: "Stop" | "SessionEnd";
+  hook_source?: "Stop" | "SessionEnd";
 }
 
 export interface NotificationPayload {
@@ -111,16 +115,42 @@ export interface NotificationPayload {
 export interface SubagentPayload {
   agent_id: string;
   agent_type?: string;
-  // SubagentStop only
+
+  /**
+   * Fields present ONLY on subagent_stop events (absent on subagent_start):
+   */
+
+  /** Absolute path to the agent's JSONL transcript file, when available. */
   agent_transcript_path?: string;
+  /** The final assistant message produced by the agent, if captured. */
   last_assistant_message?: string;
+  /** Whether the Stop hook was active when this subagent stopped. */
   stop_hook_active?: boolean;
-  // Token fields parsed from transcript at SubagentStop time (absent on SubagentStart).
-  // Present for both foreground and background agents once the transcript is available.
+
+  /**
+   * Token counts extracted from the agent's JSONL transcript at SubagentStop time.
+   *
+   * Population rules:
+   * - Only present on `subagent_stop` events — never on `subagent_start`.
+   * - Only populated when `agent_transcript_path` is set AND the transcript
+   *   file is readable by the hook handler at stop time.
+   * - Absent when: transcript path is missing, file is unreadable, or the
+   *   transcript contains no assistant entries with usage data.
+   * - Aggregator deduplication: for foreground (PostToolUse) agents, tokens
+   *   may also appear on the `tool_use` event payload. The aggregator guards
+   *   against double-counting via `agentIdsWithToolUseTokens` — only one
+   *   source wins per agent_id. Do not sum both.
+   *
+   * @see capture.ts readTranscriptTokens — the function that parses these values.
+   */
   total_tokens?: number;
+  /** Input (prompt) tokens counted in the agent's transcript. */
   input_tokens?: number;
+  /** Output (completion) tokens counted in the agent's transcript. */
   output_tokens?: number;
+  /** Cache read tokens (already-cached prompt tokens) from the transcript. */
   cache_read_tokens?: number;
+  /** Cache creation tokens (newly cached prompt tokens) from the transcript. */
   cache_creation_tokens?: number;
 }
 
