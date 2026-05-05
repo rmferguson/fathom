@@ -154,6 +154,26 @@ export interface SubagentPayload {
   cache_creation_tokens?: number;
 }
 
+/**
+ * Generic catch-all payload used for event types that do not have a structured
+ * payload schema in this version of fathom.
+ *
+ * Which events use GenericPayload:
+ *
+ * - **`pre_compact`**: The PreCompact hook fires when the Claude Code context is
+ *   about to be compacted. Fathom records the event for session timeline purposes
+ *   (you can count compactions per session) but the raw hook payload has no fields
+ *   worth aggregating — so the payload is an empty object `{}`.
+ *   Any additional fields Claude Code sends are captured in `FathomEvent.extra`.
+ *
+ * All other event types map to their own specific payload interface above.
+ *
+ * Consumer guidance:
+ * - Do not rely on any specific field being present in a GenericPayload.
+ * - Check `event_type` before casting — any cast to GenericPayload should be
+ *   a last resort. Prefer narrowing via `event_type` and the typed payload
+ *   interfaces above.
+ */
 export interface GenericPayload {
   [key: string]: unknown;
 }
