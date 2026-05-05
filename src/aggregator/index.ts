@@ -323,7 +323,14 @@ function coalesceSessionEnds(events: FathomEvent[]): FathomEvent[] {
       winners.set(sessionId, ends[0]);
       continue;
     }
-    const stopRecords = ends.filter((e) => (e.payload as SessionEndPayload).hook_source === "Stop");
+    // hook_source was added in a later fathom version. Legacy events written
+    // before that fix have no hook_source field — treat their absence as "Stop"
+    // (the original behavior before the field existed, and the conservative
+    // default that preserves as many end-of-session markers as possible).
+    const stopRecords = ends.filter((e) => {
+      const src = (e.payload as SessionEndPayload).hook_source;
+      return src === "Stop" || src === undefined;
+    });
     const winner =
       stopRecords.length > 0 ? stopRecords[stopRecords.length - 1] : ends[ends.length - 1];
     winners.set(sessionId, winner);

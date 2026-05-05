@@ -334,6 +334,72 @@ describe("aggregate", () => {
     expect(r.sessions[0].ended_at).toBe("2026-04-21T10:06:00Z");
   });
 
+  it("handles legacy session_end events without hook_source field — treats absent as Stop", () => {
+    // Events written by pre-hook_source fathom versions have no hook_source field.
+    // Without the fallback these events never matched the Stop filter and always
+    // lost the coalesce race, skewing end timestamps.
+    const events = [
+      makeEvent({
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/tmp", permission_mode: "default" },
+      }),
+      // Legacy event: no hook_source field
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:03:00Z",
+        payload: { cwd: "/tmp", last_assistant_message: "legacy" } as Record<string, unknown>,
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:04:00Z",
+        payload: { cwd: "/tmp", last_assistant_message: "legacy 2" } as Record<string, unknown>,
+      }),
+      // Modern Stop event should still win (it's a Stop) but both legacy events
+      // are also counted as Stop, so the last one wins overall.
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:05:00Z",
+        payload: { cwd: "/tmp", hook_source: "Stop", last_assistant_message: "modern stop" },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions).toHaveLength(1);
+    // The last Stop (or treated-as-Stop) wins — wall_time should be 5min from modern Stop.
+    expect(r.sessions[0].wall_time_ms).toBe(5 * 60 * 1000);
+    expect(r.sessions[0].ended_at).toBe("2026-04-21T10:05:00Z");
+  });
+
+  it("coalesces legacy session_end without hook_source — last absent-hook_source wins when no modern Stop", () => {
+    // Two legacy events (no hook_source) and one SessionEnd — last legacy wins.
+    const events = [
+      makeEvent({
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/tmp", permission_mode: "default" },
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:02:00Z",
+        payload: { cwd: "/tmp", last_assistant_message: "first" } as Record<string, unknown>,
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:04:00Z",
+        payload: { cwd: "/tmp", last_assistant_message: "second" } as Record<string, unknown>,
+      }),
+      makeEvent({
+        event_type: "session_end",
+        timestamp: "2026-04-21T10:03:00Z",
+        payload: { cwd: "/tmp", hook_source: "SessionEnd", last_assistant_message: null },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions).toHaveLength(1);
+    // Last absent-hook_source event (10:04) should win over SessionEnd (10:03).
+    expect(r.sessions[0].wall_time_ms).toBe(4 * 60 * 1000);
+  });
+
   it("sorts sessions newest-first", () => {
     const events = [
       makeEvent({
