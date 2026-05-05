@@ -7,7 +7,7 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased] — 1.0.0
+## [1.0.0] — 2026-05-05
 
 First stable release. All changes below constitute the 0.x → 1.0.0 surface.
 
@@ -127,5 +127,5 @@ major version are quarantined rather than silently misread.
 Initial release: event capture via Claude Code hooks, `fathom summary`, `fathom trend`,
 `fathom export`, `fathom install / uninstall`.
 
-[Unreleased]: https://github.com/aquarium-tools/fathom/compare/v0.6.0...HEAD
+[1.0.0]: https://github.com/aquarium-tools/fathom/compare/v0.6.0...v1.0.0
 [0.6.0]: https://github.com/aquarium-tools/fathom/releases/tag/v0.6.0

@@ -1,6 +1,6 @@
 {
   "name": "@aquarium-tools/fathom",
-  "version": "0.6.1",
+  "version": "1.0.0",
   "description": "Hooks-based telemetry and observability for Claude Code sessions",
   "license": "MIT",
   "bin": {
