@@ -37,6 +37,5 @@ jobs:
           node-version: 22
           cache: npm
           registry-url: "https://registry.npmjs.org"
-      - run: npm install -g npm@latest
       - run: npm ci
-      - run: npm publish
+      - run: npx --yes npm@latest publish
