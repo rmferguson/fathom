@@ -23,6 +23,7 @@ const HOOK_EVENTS = [
   "SubagentStart",
   "SubagentStop",
   "PreCompact",
+  "UserPromptSubmit",
 ];
 
 describe("getSettingsPath", () => {
@@ -65,7 +66,7 @@ describe("loadSettings", () => {
 });
 
 describe("installHooks", () => {
-  it("registers all 10 hook events on empty settings", () => {
+  it("registers all 11 hook events on empty settings", () => {
     const result = installHooks({});
     const hooks = result.hooks as Record<string, unknown[]>;
     for (const event of HOOK_EVENTS) {
@@ -191,7 +192,7 @@ describe("runInstall / runUninstall (filesystem)", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("runInstall(local=true) creates settings.local.json with all 10 hook events", () => {
+  it("runInstall(local=true) creates settings.local.json with all 11 hook events", () => {
     runInstall(true);
     const settingsPath = path.join(tmpDir, ".claude", "settings.local.json");
     expect(fs.existsSync(settingsPath)).toBe(true);

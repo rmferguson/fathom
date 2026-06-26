@@ -558,6 +558,83 @@ describe("fathom CLI (integration)", () => {
     expect(JSON.parse(lines[0]).payload.tool_name).toBe("B");
   });
 
+  it("summary: shows Turns line when user_turn events are present", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "user_turn",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { prompt_size_bytes: 5 },
+      },
+    ]);
+    const r = runCli(["summary"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Turns: 1");
+  });
+
+  it("summary: shows Compactions line when pre_compact events are present", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "pre_compact",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: {},
+      },
+      {
+        event_type: "pre_compact",
+        timestamp: "2026-04-21T10:02:00Z",
+        payload: {},
+      },
+    ]);
+    const r = runCli(["summary"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Compactions: 2");
+  });
+
+  it("sessions: table header includes TURNS column", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+    ]);
+    const r = runCli(["sessions"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("TURNS");
+  });
+
+  it("trend: shows Avg turns/session when user_turn events are present", () => {
+    writeEvents([
+      {
+        event_type: "session_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { cwd: "/x", permission_mode: "default" },
+      },
+      {
+        event_type: "user_turn",
+        timestamp: "2026-04-21T10:01:00Z",
+        payload: { prompt_size_bytes: 5 },
+      },
+      {
+        event_type: "user_turn",
+        timestamp: "2026-04-21T10:02:00Z",
+        payload: { prompt_size_bytes: 10 },
+      },
+    ]);
+    const r = runCli(["trend"], { sink, project: PROJECT });
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Avg turns/session");
+  });
+
   it("--project: unknown project exits non-zero with helpful stderr", () => {
     writeEvents([
       { event_type: "tool_use", payload: { tool_name: "Bash", tool_use_id: "1", success: true } },
@@ -1039,13 +1116,14 @@ describe("fathom install / uninstall (CLI integration)", () => {
     expect(fs.existsSync(settingsPath)).toBe(true);
     const settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
     expect(settings).toHaveProperty("hooks");
-    // All 10 hook events must be registered.
+    // All 11 hook events must be registered.
     const hookEvents = Object.keys(settings.hooks);
     expect(hookEvents).toContain("PostToolUse");
     expect(hookEvents).toContain("SessionStart");
     expect(hookEvents).toContain("SubagentStop");
     expect(hookEvents).toContain("PreCompact");
-    expect(hookEvents).toHaveLength(10);
+    expect(hookEvents).toContain("UserPromptSubmit");
+    expect(hookEvents).toHaveLength(11);
   });
 
   it("install --local: writes hooks to .claude/settings.local.json in cwd", () => {

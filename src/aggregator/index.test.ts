@@ -987,6 +987,148 @@ describe("aggregate", () => {
   });
 });
 
+describe("compaction_count", () => {
+  it("counts pre_compact events per session", () => {
+    const events = [
+      makeEvent({ event_type: "pre_compact" }),
+      makeEvent({ event_type: "pre_compact" }),
+    ];
+    expect(aggregate(events).sessions[0].compaction_count).toBe(2);
+  });
+
+  it("is zero when no pre_compact events are present", () => {
+    const events = [
+      makeEvent({ event_type: "tool_use", payload: { tool_name: "Bash", tool_use_id: "1", success: true } }),
+    ];
+    expect(aggregate(events).sessions[0].compaction_count).toBe(0);
+  });
+
+  it("total_compactions sums across sessions", () => {
+    const events = [
+      makeEvent({ event_type: "pre_compact", session_id: "s-1" }),
+      makeEvent({ event_type: "pre_compact", session_id: "s-1" }),
+      makeEvent({ event_type: "pre_compact", session_id: "s-2" }),
+    ];
+    expect(aggregate(events).total_compactions).toBe(3);
+  });
+});
+
+describe("turn_count", () => {
+  it("counts user_turn events per session", () => {
+    const events = [
+      makeEvent({ event_type: "user_turn", payload: { prompt_size_bytes: 5 } }),
+      makeEvent({ event_type: "user_turn", payload: { prompt_size_bytes: 10 } }),
+      makeEvent({ event_type: "user_turn", payload: { prompt_size_bytes: 3 } }),
+    ];
+    expect(aggregate(events).sessions[0].turn_count).toBe(3);
+  });
+
+  it("is zero when no user_turn events are present", () => {
+    const events = [
+      makeEvent({ event_type: "tool_use", payload: { tool_name: "Bash", tool_use_id: "1", success: true } }),
+    ];
+    expect(aggregate(events).sessions[0].turn_count).toBe(0);
+  });
+
+  it("total_turns and avg_turns_per_session are correct across sessions", () => {
+    const events = [
+      makeEvent({ event_type: "user_turn", session_id: "s-1", payload: { prompt_size_bytes: 5 } }),
+      makeEvent({ event_type: "user_turn", session_id: "s-1", payload: { prompt_size_bytes: 5 } }),
+      makeEvent({ event_type: "user_turn", session_id: "s-2", payload: { prompt_size_bytes: 5 } }),
+    ];
+    const r = aggregate(events);
+    expect(r.total_turns).toBe(3);
+    expect(r.avg_turns_per_session).toBeCloseTo(1.5, 5);
+  });
+});
+
+describe("tool_avg_duration_ms", () => {
+  it("derives duration from tool_start + tool_use timestamps when duration_ms is absent", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-1" },
+      }),
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:00.500Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-1", success: true },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].tool_avg_duration_ms?.["Bash"]).toBe(500);
+  });
+
+  it("uses duration_ms directly when present, ignoring derived value", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { tool_name: "Agent", tool_use_id: "tu-2" },
+      }),
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:05Z",
+        payload: { tool_name: "Agent", tool_use_id: "tu-2", success: true, duration_ms: 1200 },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].tool_avg_duration_ms?.["Agent"]).toBe(1200);
+  });
+
+  it("averages two calls to the same tool", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_start",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-a" },
+      }),
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:00.500Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-a", success: true },
+      }),
+      makeEvent({
+        event_type: "tool_start",
+        timestamp: "2026-04-21T10:00:01Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-b" },
+      }),
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:01.300Z",
+        payload: { tool_name: "Bash", tool_use_id: "tu-b", success: true },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].tool_avg_duration_ms?.["Bash"]).toBe(400);
+  });
+
+  it("tool_use with no matching tool_start produces no entry, no error", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { tool_name: "Read", tool_use_id: "tu-orphan", success: true },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].tool_avg_duration_ms?.["Read"]).toBeUndefined();
+  });
+
+  it("field is absent on session with no duration data", () => {
+    const events = [
+      makeEvent({
+        event_type: "tool_use",
+        timestamp: "2026-04-21T10:00:00Z",
+        payload: { tool_name: "Read", tool_use_id: "tu-1", success: true },
+      }),
+    ];
+    const r = aggregate(events);
+    expect(r.sessions[0].tool_avg_duration_ms).toBeUndefined();
+  });
+});
+
 describe("aggregate — edge cases with malformed/missing payload fields", () => {
   it("handles tool_use with undefined tool_name — falls into empty-string bucket", () => {
     const events = [
