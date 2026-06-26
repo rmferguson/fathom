@@ -6,6 +6,7 @@ import {
   FathomEvent,
   SCHEMA_VERSION,
   ToolUsePayload,
+  ToolStartPayload,
   ToolFailurePayload,
   SessionEndPayload,
   SubagentPayload,
@@ -45,6 +46,9 @@ export interface SessionSummary {
   cache_read_tokens: number;
   cache_creation_tokens: number;
   errors: number;
+  compaction_count: number;
+  turn_count: number;
+  tool_avg_duration_ms?: Record<string, number>;
   subagents: Record<string, SubagentSummary>;
   /**
    * Estimated USD cost based on Agent-tool token usage. Subagents are the only
@@ -62,6 +66,9 @@ export interface AggregateSummary {
   total_cost_usd: number;
   top_tools: Array<{ tool: string; count: number }>;
   subagent_totals: Record<string, SubagentSummary>;
+  total_compactions: number;
+  total_turns: number;
+  avg_turns_per_session: number;
 }
 
 /**
@@ -399,6 +406,8 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
         cache_read_tokens: 0,
         cache_creation_tokens: 0,
         errors: 0,
+        compaction_count: 0,
+        turn_count: 0,
         subagents: {},
         cost_usd: 0,
       };
@@ -419,11 +428,20 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
     return true;
   }
 
+  const toolStartTs = new Map<string, string>(); // tool_use_id → ISO timestamp
+  const toolDurAccum = new Map<string, Map<string, { totalMs: number; count: number }>>();
+  // keyed session_id → tool_name → { totalMs, count }
+
   for (const event of dedupedEvents) {
     const session = ensureSession(event);
 
     if (event.timestamp < session.started_at) {
       session.started_at = event.timestamp;
+    }
+
+    if (event.event_type === "tool_start") {
+      const sp = event.payload as ToolStartPayload;
+      toolStartTs.set(sp.tool_use_id, event.timestamp);
     }
 
     if (event.event_type === "tool_use") {
@@ -466,6 +484,26 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
       }
       if (!p.success && recordError(event.session_id, p.tool_use_id)) {
         session.errors++;
+      }
+      let effectiveDurationMs: number | undefined = p.duration_ms;
+      if (effectiveDurationMs === undefined) {
+        const startTs = toolStartTs.get(p.tool_use_id);
+        if (startTs !== undefined) {
+          const derived = Date.parse(event.timestamp) - Date.parse(startTs);
+          if (Number.isFinite(derived) && derived >= 0) {
+            effectiveDurationMs = derived;
+          }
+        }
+      }
+      if (effectiveDurationMs !== undefined) {
+        let sessAccum = toolDurAccum.get(event.session_id);
+        if (sessAccum === undefined) {
+          sessAccum = new Map();
+          toolDurAccum.set(event.session_id, sessAccum);
+        }
+        const toolName = p.tool_name;
+        const cur = sessAccum.get(toolName) ?? { totalMs: 0, count: 0 };
+        sessAccum.set(toolName, { totalMs: cur.totalMs + effectiveDurationMs, count: cur.count + 1 });
       }
     }
 
@@ -544,6 +582,13 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
       }
     }
 
+    if (event.event_type === "pre_compact") {
+      session.compaction_count++;
+    }
+    if (event.event_type === "user_turn") {
+      session.turn_count++;
+    }
+
     if (event.event_type === "session_end") {
       const p = event.payload as SessionEndPayload;
       session.ended_at = event.timestamp;
@@ -560,6 +605,16 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
   const sessions = Array.from(sessionsMap.values()).sort((a, b) =>
     b.started_at.localeCompare(a.started_at)
   );
+
+  for (const session of sessionsMap.values()) {
+    const accum = toolDurAccum.get(session.session_id);
+    if (accum !== undefined && accum.size > 0) {
+      session.tool_avg_duration_ms = {};
+      for (const [toolName, { totalMs, count }] of accum) {
+        session.tool_avg_duration_ms[toolName] = Math.round(totalMs / count);
+      }
+    }
+  }
 
   const toolTotals: Record<string, number> = {};
   const subagentTotals: Record<string, SubagentSummary> = {};
@@ -602,6 +657,13 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
     .slice(0, 10)
     .map(([tool, count]) => ({ tool, count }));
 
+  let totalCompactions = 0;
+  let totalTurns = 0;
+  for (const s of sessions) {
+    totalCompactions += s.compaction_count;
+    totalTurns += s.turn_count;
+  }
+
   return {
     sessions,
     total_sessions: sessions.length,
@@ -610,5 +672,8 @@ export function aggregate(events: FathomEvent[], options: AggregateOptions = {})
     total_cost_usd: totalCost,
     top_tools: topTools,
     subagent_totals: subagentTotals,
+    total_compactions: totalCompactions,
+    total_turns: totalTurns,
+    avg_turns_per_session: sessions.length > 0 ? totalTurns / sessions.length : 0,
   };
 }
