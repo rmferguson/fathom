@@ -1,5 +1,5 @@
 /**
- * Fathom event schema v1.0.0
+ * Fathom event schema v1.1.0
  *
  * The hook handler layer is the only layer coupled to Claude Code's hook API.
  * Everything above this file consumes the normalized FathomEvent shape.
@@ -8,9 +8,11 @@
  * - Additive changes (new optional fields) → minor version bump
  * - Breaking changes (field removal, type change) → major version bump
  * - Consumers pin to a schema version range, not "latest"
+ *
+ * v1.1.0 — added user_turn event type and UserTurnPayload
  */
 
-export const SCHEMA_VERSION = "1.0.0";
+export const SCHEMA_VERSION = "1.1.0";
 
 export type EventType =
   | "session_start"

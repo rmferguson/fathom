@@ -28,7 +28,7 @@ import * as os from "os";
 import * as path from "path";
 import * as readline from "readline";
 
-const SCHEMA_VERSION = "1.0.0";
+const SCHEMA_VERSION = "1.1.0";
 const DEFAULT_SINK = path.join(os.homedir(), ".fathom", "events.jsonl");
 const SINK = process.env.FATHOM_SINK ?? DEFAULT_SINK;
 

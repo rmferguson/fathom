@@ -19,7 +19,7 @@ describe("normalize", () => {
 
   it("sets schema_version, session_id, and ISO timestamp on all events", () => {
     const result = normalize(raw({ hook_event_name: "PreCompact" }));
-    expect(result?.schema_version).toBe("1.0.0");
+    expect(result?.schema_version).toBe("1.1.0");
     expect(result?.session_id).toBe(SESSION_ID);
     expect(result?.timestamp).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/);
   });
