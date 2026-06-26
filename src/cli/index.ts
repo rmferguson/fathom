@@ -312,6 +312,9 @@ program
       console.log(`\nSession: ${last.session_id.slice(0, 8)}...`);
       console.log(`Started: ${last.started_at}`);
       console.log(`Duration: ${durationStr}`);
+      if (last.turn_count > 0) {
+        console.log(`Turns: ${last.turn_count}`);
+      }
       console.log(`\nTokens`);
       console.log(`  Total:        ${last.total_tokens.toLocaleString()}`);
       console.log(`  Input:        ${last.input_tokens.toLocaleString()}`);
@@ -319,7 +322,9 @@ program
       console.log(`  Cache read:   ${last.cache_read_tokens.toLocaleString()}`);
       console.log(`\nTop tools`);
       for (const [tool, count] of topTools) {
-        console.log(`  ${tool.padEnd(20)} ${count}`);
+        const avgMs = last.tool_avg_duration_ms?.[tool];
+        const durStr = avgMs !== undefined ? `  avg ${avgMs}ms` : "";
+        console.log(`  ${tool.padEnd(20)} ${count}${durStr}`);
       }
       if (last.cost_usd > 0) {
         console.log(`\nEstimated cost (Agent tool only): $${last.cost_usd.toFixed(4)}`);
@@ -339,6 +344,9 @@ program
       }
       if (last.errors > 0) {
         console.log(`\nErrors: ${last.errors}`);
+      }
+      if (last.compaction_count > 0) {
+        console.log(`\nCompactions: ${last.compaction_count}`);
       }
     })
   );
@@ -425,6 +433,7 @@ program
           total_tokens: s.total_tokens,
           tool_calls_total: Object.values(s.tool_calls).reduce((a, b) => a + b, 0),
           cost_usd: s.cost_usd,
+          turn_count: s.turn_count,
         }));
         console.log(JSON.stringify(rows, null, 2));
         return;
@@ -435,16 +444,16 @@ program
       if (multiProject) {
         // Wide table with PROJECT column
         console.log(
-          `\n${"SESSION".padEnd(12)} ${"PROJECT".padEnd(16)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
+          `\n${"SESSION".padEnd(12)} ${"PROJECT".padEnd(16)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)} ${"TURNS".padStart(8)}`
         );
-        console.log("─".repeat(74));
+        console.log("─".repeat(83));
         const shown = sessions.slice(0, n);
         for (const s of shown) {
           const id = s.session_id.slice(0, 8) + "...";
           const proj = path.basename(s.project_dir || "").slice(0, 15).padEnd(16);
           const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
           console.log(
-            `${id.padEnd(12)} ${proj} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+            `${id.padEnd(12)} ${proj} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)} ${String(s.turn_count).padStart(8)}`
           );
         }
         if (sessions.length > shown.length) {
@@ -454,17 +463,17 @@ program
           );
         }
       } else {
-        // Narrow table (single-project scope — byte-identical to prior behavior)
+        // Narrow table (single-project scope)
         console.log(
-          `\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)}`
+          `\n${"SESSION".padEnd(12)} ${"STARTED".padEnd(24)} ${"TOKENS".padStart(10)} ${"TOOLS".padStart(8)} ${"TURNS".padStart(8)}`
         );
-        console.log("─".repeat(58));
+        console.log("─".repeat(67));
         const shown = sessions.slice(0, n);
         for (const s of shown) {
           const id = s.session_id.slice(0, 8) + "...";
           const toolCount = Object.values(s.tool_calls).reduce((a, b) => a + b, 0);
           console.log(
-            `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)}`
+            `${id.padEnd(12)} ${s.started_at.slice(0, 23).padEnd(24)} ${s.total_tokens.toLocaleString().padStart(10)} ${String(toolCount).padStart(8)} ${String(s.turn_count).padStart(8)}`
           );
         }
         if (sessions.length > shown.length) {
@@ -572,6 +581,9 @@ program
       console.log(`Started: ${s?.started_at ?? "-"}`);
       console.log(`Ended:   ${s?.ended_at ?? "-"}`);
       console.log(`Duration: ${duration}`);
+      if ((s?.turn_count ?? 0) > 0) {
+        console.log(`Turns: ${s!.turn_count}`);
+      }
 
       console.log(`\nTokens`);
       console.log(`  Total:        ${(s?.total_tokens ?? 0).toLocaleString()}`);
@@ -583,7 +595,9 @@ program
       if (toolEntries.length > 0) {
         console.log(`\nTool calls (${toolEntries.length} distinct)`);
         for (const [tool, count] of toolEntries) {
-          console.log(`  ${tool.padEnd(22)} ${count}`);
+          const avgMs = s?.tool_avg_duration_ms?.[tool];
+          const durStr = avgMs !== undefined ? `  avg ${avgMs}ms` : "";
+          console.log(`  ${tool.padEnd(22)} ${count}${durStr}`);
         }
       }
 
@@ -608,6 +622,9 @@ program
         for (const e of errors) {
           console.log(`  ${e.timestamp}  ${e.tool_name}  ${e.error}`);
         }
+      }
+      if ((s?.compaction_count ?? 0) > 0) {
+        console.log(`\nCompactions: ${s!.compaction_count}`);
       }
 
       if (s?.cost_usd && s.cost_usd > 0) {
@@ -678,6 +695,9 @@ program
               total_cost_usd,
               top_tools: top_tools.slice(0, 8),
               subagent_totals,
+              total_compactions: summary.total_compactions,
+              total_turns: summary.total_turns,
+              avg_turns_per_session: summary.avg_turns_per_session,
               projectLabel,
             },
             null,
@@ -694,6 +714,9 @@ program
         console.log(
           `  Avg per session: ${Math.round(total_tokens / total_sessions).toLocaleString()}`
         );
+      }
+      if (summary.total_turns > 0 && total_sessions > 0) {
+        console.log(`  Avg turns/session: ${summary.avg_turns_per_session.toFixed(1)}`);
       }
       if (total_cost_usd > 0) {
         console.log(`  Estimated cost (Agent tool only): $${total_cost_usd.toFixed(4)}`);
@@ -722,6 +745,12 @@ program
             `  Subagent token cost: $${subTotalCost.toFixed(4)} (${pct}% of total estimated cost)`
           );
         }
+      }
+      if (summary.total_compactions > 0) {
+        const avgComp = total_sessions > 0
+          ? (summary.total_compactions / total_sessions).toFixed(1)
+          : "0";
+        console.log(`\nCompactions: ${summary.total_compactions} total (avg ${avgComp}/session)`);
       }
     })
   );
