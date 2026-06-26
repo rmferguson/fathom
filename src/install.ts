@@ -29,6 +29,7 @@ export const HOOKS = [
   { event: "SubagentStart", matcher: "" },
   { event: "SubagentStop", matcher: "" },
   { event: "PreCompact", matcher: "" },
+  { event: "UserPromptSubmit", matcher: "" },
 ];
 
 export function getSettingsPath(local: boolean): string {

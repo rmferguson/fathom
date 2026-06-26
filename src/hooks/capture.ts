@@ -213,6 +213,15 @@ export function normalize(raw: Rec): Rec | null {
     return event("pre_compact", {}, pickExtra(raw, []));
   }
 
+  if (eventName === "UserPromptSubmit") {
+    const promptStr = typeof raw.prompt === "string" ? raw.prompt : "";
+    return event(
+      "user_turn",
+      { prompt_size_bytes: Buffer.byteLength(promptStr) },
+      pickExtra(raw, ["prompt"])
+    );
+  }
+
   // Intentionally unhandled hook events.
   //
   // Claude Code emits ~30 hook event types (see docs/hook-reference.md). Fathom
@@ -220,7 +229,6 @@ export function normalize(raw: Rec): Rec | null {
   // worth aggregating (tool calls, sessions, subagents, compactions). Returning
   // null here drops everything else silently, which is the correct behavior:
   //
-  //   - UserPromptSubmit       — only carries prompt text; not a metric.
   //   - PermissionRequest /    — workflow signals, not workload signals.
   //     PermissionDenied
   //   - PostCompact            — pair with PreCompact; PreCompact alone is enough.
