@@ -61,3 +61,8 @@ AI Firm consumes fathom as a dependency (or bundles it). Enforcement hooks (scop
 ## Task Tracker
 
 task-tracker: beads
+
+## Project Context
+
+- Stack: TypeScript, Node.js stdlib, Commander (CLI), Vitest (testing)
+- JSON tool: jq
