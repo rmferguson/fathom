@@ -344,6 +344,26 @@ describe("normalize", () => {
     const result = normalize(raw({ hook_event_name: "PreCompact" }));
     expect(result?.event_type).toBe("pre_compact");
   });
+
+  describe("UserPromptSubmit", () => {
+    it("captures prompt byte count as user_turn", () => {
+      const e = normalize(raw({ hook_event_name: "UserPromptSubmit", prompt: "hello" }));
+      expect(e?.event_type).toBe("user_turn");
+      expect((e?.payload as { prompt_size_bytes: number }).prompt_size_bytes).toBe(5);
+    });
+    it("handles empty prompt", () => {
+      const e = normalize(raw({ hook_event_name: "UserPromptSubmit", prompt: "" }));
+      expect((e?.payload as { prompt_size_bytes: number }).prompt_size_bytes).toBe(0);
+    });
+    it("handles missing prompt field", () => {
+      const e = normalize(raw({ hook_event_name: "UserPromptSubmit" }));
+      expect((e?.payload as { prompt_size_bytes: number }).prompt_size_bytes).toBe(0);
+    });
+    it("puts unknown fields in extra, not payload", () => {
+      const e = normalize(raw({ hook_event_name: "UserPromptSubmit", prompt: "hi", unknown_field: 99 }));
+      expect(e?.extra).toEqual({ unknown_field: 99 });
+    });
+  });
 });
 
 describe("main", () => {

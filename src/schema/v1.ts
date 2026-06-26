@@ -21,7 +21,8 @@ export type EventType =
   | "notification"
   | "subagent_start"
   | "subagent_stop"
-  | "pre_compact";
+  | "pre_compact"
+  | "user_turn";
 
 export interface FathomEvent {
   schema_version: string;
@@ -43,6 +44,7 @@ export type EventPayload =
   | SessionStartPayload
   | NotificationPayload
   | SubagentPayload
+  | UserTurnPayload
   | GenericPayload;
 
 export interface ToolUsePayload {
@@ -152,6 +154,10 @@ export interface SubagentPayload {
   cache_read_tokens?: number;
   /** Cache creation tokens (newly cached prompt tokens) from the transcript. */
   cache_creation_tokens?: number;
+}
+
+export interface UserTurnPayload {
+  prompt_size_bytes?: number;
 }
 
 /**
