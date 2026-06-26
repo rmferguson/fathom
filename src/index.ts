@@ -21,6 +21,7 @@ export {
   type SessionEndPayload,
   type NotificationPayload,
   type SubagentPayload,
+  type UserTurnPayload,
   type GenericPayload,
 } from "./schema/v1";
 
