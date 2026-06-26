@@ -16,6 +16,19 @@ import { FathomEvent } from "../schema/v1";
 
 const CLI_PATH = path.resolve(__dirname, "index.ts");
 
+/** Find the tsx binary by walking up from the current directory until node_modules is found.
+ *  Needed because worktrees share node_modules with the parent repo rather than having their own. */
+function findTsx(): string {
+  let dir = __dirname;
+  for (let i = 0; i < 10; i++) {
+    const candidate = path.join(dir, "node_modules", ".bin", "tsx");
+    if (fs.existsSync(candidate)) return candidate;
+    dir = path.dirname(dir);
+  }
+  throw new Error("tsx not found — run npm install");
+}
+const tsxBin = findTsx();
+
 /** Run the fathom CLI in a subprocess with an isolated sink and project dir. */
 function runCli(args: string[], opts: { sink: string; project?: string } = { sink: "" }) {
   const env: NodeJS.ProcessEnv = {
@@ -24,8 +37,6 @@ function runCli(args: string[], opts: { sink: string; project?: string } = { sin
     PATH: process.env.PATH,
   };
   if (opts.project) env.FATHOM_PROJECT = opts.project;
-  // tsx is a devDependency; use the local binary.
-  const tsxBin = path.resolve(__dirname, "../../node_modules/.bin/tsx");
   return spawnSync(tsxBin, [CLI_PATH, ...args], { env, encoding: "utf8" });
 }
 
@@ -1034,7 +1045,7 @@ describe("fathom prune (CLI)", () => {
       {
         schema_version: "1.0.0",
         event_type: "pre_compact",
-        timestamp: "2026-04-20T00:00:00Z",
+        timestamp: "2026-06-20T00:00:00Z",
         session_id: "s2",
         project_dir: "/p",
         payload: {},
@@ -1061,7 +1072,7 @@ describe("fathom install / uninstall (CLI integration)", () => {
     throw new Error("Could not find repo root with node_modules — run npm install");
   }
   const REPO_ROOT = findNodeModulesRoot();
-  const CLI_PATH_LOCAL = path.join(REPO_ROOT, "src", "cli", "index.ts");
+  const CLI_PATH_LOCAL = path.resolve(__dirname, "index.ts");
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "fathom-install-cli-test-"));

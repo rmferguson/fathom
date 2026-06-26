@@ -48,7 +48,7 @@ export function loadSettings(settingsPath: string): Record<string, unknown> {
   }
 }
 
-const CAPTURE_PATTERN = /node .+\/fathom\/(src|dist)\/hooks\/capture\.js/;
+const CAPTURE_PATTERN = /node .+\/hooks\/capture\.js/;
 
 function isFathomEntry(entry: { hooks: unknown[] }): boolean {
   return (
