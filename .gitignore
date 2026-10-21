@@ -27,9 +27,3 @@ coverage/
 
 # macOS
 .DS_Store
-
-# Firm — ephemeral runtime state
-.firm/scratch/
-.firm/sessions/
-.firm/handoffs/
-.firm/logs/

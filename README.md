@@ -171,6 +171,10 @@ What this means in practice:
 - Cost only reflects Agent-tool spend — the only place Claude Code hooks expose token counts. Top-level orchestrator token usage is not counted.
 - The hook API does not tell you which model handled a turn, so a single rate is applied to all subagent spend.
 
+## Known limitations
+
+**Named agents appear as `unknown` in subagent breakdowns.** Claude Code does not populate `agent_type` in SubagentStart/SubagentStop hook payloads for agents dispatched with a `name:` parameter (as opposed to `subagent_type:`). Fathom has no way to recover the name: transcript files are not written for sub-subagents (agents dispatched from within another subagent). This is a Claude Code hook API limitation. The token counts for these agents are still captured correctly — only the label is missing.
+
 Defaults match Claude Sonnet pricing (USD per 1M tokens):
 
 ```bash
