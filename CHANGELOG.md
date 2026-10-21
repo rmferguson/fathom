@@ -7,9 +7,9 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [2.0.0] — 2026-10-21
 
-### Changed
+### Breaking changes
 
 - Minimum Node version is now 24.22.1 (`engines.node: ">=24.22.1"`), the
   patched 24.x release from the
