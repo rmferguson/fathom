@@ -7,6 +7,17 @@ Versioning follows [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [Unreleased]
+
+### Changed
+
+- Minimum Node version is now 24.22.1 (`engines.node: ">=24.22.1"`), the
+  patched 24.x release from the
+  [October 2026 Node.js security releases](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases).
+  Dropped Node 20 and 22; CI now tests Node 24 and 26.
+
+---
+
 ## [1.0.0] — 2026-05-05
 
 First stable release. All changes below constitute the 0.x → 1.0.0 surface.
