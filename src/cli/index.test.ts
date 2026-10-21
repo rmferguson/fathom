@@ -1032,7 +1032,7 @@ describe("fathom prune (CLI)", () => {
   });
 
   it("removes old events with --keep-days", () => {
-    // Use a very large keep-days to ensure the old event is always pruned.
+    // s1 is years old and always pruned; s2 is stamped "now" so it always survives.
     writeLines([
       {
         schema_version: "1.0.0",
@@ -1045,7 +1045,7 @@ describe("fathom prune (CLI)", () => {
       {
         schema_version: "1.0.0",
         event_type: "pre_compact",
-        timestamp: "2026-06-20T00:00:00Z",
+        timestamp: new Date().toISOString(),
         session_id: "s2",
         project_dir: "/p",
         payload: {},
