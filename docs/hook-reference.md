@@ -193,6 +193,8 @@ No `duration_ms`, no `status`, no token data. `interrupted: true` is the failure
 
 Note: `permission_mode` is **absent** from SubagentStart (unlike most other events).
 
+**`agent_type` is empty for named agents** (VERIFIED 2026-05-12): Agents dispatched with a `name:` field rather than `subagent_type:` have `agent_type: ""` in both SubagentStart and SubagentStop payloads. Claude Code does not populate the field for named agents. The transcript files referenced in SubagentStop payloads also do not exist for sub-subagents (agents dispatched from within another subagent). These agents appear as `unknown` in fathom's subagent breakdown and cannot be identified further from hook data alone.
+
 ### SubagentStop — Additional Fields (VERIFIED 2026-04-21)
 
 ```json
@@ -218,6 +220,8 @@ Note: `permission_mode` is **absent** from SubagentStart (unlike most other even
 ```
 
 `last_assistant_message` is the full text of the final response, not truncated. `stop_hook_active` is present as a payload field (not just an env var) and prevents infinite loops if the Stop hook itself triggers another stop. Identical structure to SubagentStop minus the agent-specific fields.
+
+**`wall_time_ms` is never present** (VERIFIED 2026-04-21): Neither Stop nor SessionEnd payloads include a wall-time or duration field. Derive session duration from the timestamps: `Date.parse(session_end.timestamp) - Date.parse(session_start.timestamp)`. Any schema field named `wall_time_ms` exists only for forward-compatibility and will always be `undefined`.
 
 ---
 
